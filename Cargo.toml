@@ -1,0 +1,33 @@
+[package]
+name = "oxideav-audiotoolbox"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/OxideAV/oxideav-audiotoolbox"
+homepage = "https://github.com/OxideAV/oxideav-audiotoolbox"
+authors = ["Mark Karpeles"]
+description = "macOS AudioToolbox hardware decode/encode bridge for the oxideav framework — runtime-loaded via libloading, no compile-time framework dep"
+readme = "README.md"
+keywords = ["audiotoolbox", "macos", "hardware", "audio", "oxideav"]
+categories = ["multimedia::encoding", "multimedia::audio", "hardware-support"]
+
+[dependencies]
+# `oxideav-core` is gated behind the default-on `registry` feature so
+# tooling consumers can depend on `oxideav-audiotoolbox` with
+# `default-features = false` and avoid the framework dependency tree.
+oxideav-core = { version = "0.1", optional = true }
+
+# libloading is only pulled on macOS targets — every non-mac build
+# ships a stub `register()` that's a no-op.
+[target.'cfg(target_os = "macos")'.dependencies]
+libloading = "0.8"
+
+[features]
+default = ["registry"]
+
+# Wires up the codec/encoder/decoder trait implementations against
+# `oxideav-core` so the crate can plug into the `oxideav` framework
+# registry. Default-on; turn off for tooling that just wants the raw
+# AudioToolbox bridge bindings without the framework.
+registry = ["dep:oxideav-core"]
