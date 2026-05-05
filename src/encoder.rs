@@ -8,14 +8,16 @@
 
 use std::ffi::c_void;
 
-use oxideav_core::{CodecId, CodecParameters, Error, Frame, Packet, Result, SampleFormat, TimeBase};
 use oxideav_core::Encoder;
+use oxideav_core::{
+    CodecId, CodecParameters, Error, Frame, Packet, Result, SampleFormat, TimeBase,
+};
 
 use crate::adts;
 use crate::sys::{
-    self, AudioBuffer, AudioBufferList1, AudioStreamBasicDescription, AudioStreamPacketDescription,
-    AudioConverterRef, NO_ERR, K_AUDIO_CONVERTER_ENCODE_BIT_RATE,
-    K_AUDIO_CONVERTER_MAX_OUTPUT_PACKET_SIZE,
+    self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
+    AudioStreamPacketDescription, K_AUDIO_CONVERTER_ENCODE_BIT_RATE,
+    K_AUDIO_CONVERTER_MAX_OUTPUT_PACKET_SIZE, NO_ERR,
 };
 
 /// Default AAC bitrate when the caller does not specify one.
@@ -70,8 +72,8 @@ unsafe impl Send for AacAtEncoder {}
 
 impl AacAtEncoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw = sys::framework()
-            .map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw =
+            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
 
         let sr = params.sample_rate.unwrap_or(48_000);
         let ch = params.channels.unwrap_or(2) as u32;
@@ -92,9 +94,7 @@ impl AacAtEncoder {
             }
         };
 
-        let sample_format = params
-            .sample_format
-            .unwrap_or(SampleFormat::F32);
+        let sample_format = params.sample_format.unwrap_or(SampleFormat::F32);
 
         let (in_asbd, bps) = match sample_format {
             SampleFormat::F32 => {
@@ -115,9 +115,7 @@ impl AacAtEncoder {
         let out_asbd = AudioStreamBasicDescription::mpeg4_aac(sr as f64, ch);
 
         let mut converter: AudioConverterRef = std::ptr::null_mut();
-        let status = unsafe {
-            sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter)
-        };
+        let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
             return Err(Error::other(format!(
                 "AudioConverterNew (encoder) failed: OSStatus {status}"
@@ -136,9 +134,7 @@ impl AacAtEncoder {
         };
         if status != NO_ERR {
             // Non-fatal: Apple's software encoder may round the bitrate.
-            eprintln!(
-                "audiotoolbox: AudioConverterSetProperty(bitrate) = {status} (ignoring)"
-            );
+            eprintln!("audiotoolbox: AudioConverterSetProperty(bitrate) = {status} (ignoring)");
         }
 
         // Query max output packet size.
@@ -175,8 +171,8 @@ impl AacAtEncoder {
 
     /// Encode one interleaved PCM frame and store the ADTS packet.
     fn encode_frame_inner(&mut self, pcm: &[u8]) -> Result<()> {
-        let fw = sys::framework()
-            .map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw =
+            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
 
         // Allocate output buffer.
         let out_size = self.max_packet_bytes as usize;

@@ -10,9 +10,7 @@
 use std::f32::consts::PI;
 
 use oxideav_audiotoolbox::{decoder, encoder};
-use oxideav_core::{
-    AudioFrame, CodecId, CodecParameters, Frame, Packet, SampleFormat, TimeBase,
-};
+use oxideav_core::{AudioFrame, CodecId, CodecParameters, Frame, Packet, SampleFormat, TimeBase};
 
 fn gen_sine_f32(sample_rate: u32, channels: u16, freq_hz: f32, n_samples: usize) -> Vec<f32> {
     let mut buf = Vec::with_capacity(n_samples * channels as usize);
@@ -30,12 +28,7 @@ fn gen_sine_f32(sample_rate: u32, channels: u16, freq_hz: f32, n_samples: usize)
 /// looking for the best alignment against the reference (compensating for
 /// codec group delay up to `max_delay_samples`), and returns the best SNR
 /// found in dB.
-fn best_snr_db(
-    ref_ch: &[f32],
-    dec_ch: &[f32],
-    max_delay_samples: usize,
-    window: usize,
-) -> f64 {
+fn best_snr_db(ref_ch: &[f32], dec_ch: &[f32], max_delay_samples: usize, window: usize) -> f64 {
     let mut best: f64 = f64::NEG_INFINITY;
     let max_d = max_delay_samples.min(dec_ch.len().saturating_sub(window));
     for d in 0..=max_d {
@@ -75,10 +68,7 @@ fn aac_roundtrip_snr_ge_25db() {
 
     // ── Reference PCM ──────────────────────────────────────────────────
     let ref_samples = gen_sine_f32(SR, CH, FREQ, N_SAMPLES);
-    let ref_bytes: Vec<u8> = ref_samples
-        .iter()
-        .flat_map(|s| s.to_le_bytes())
-        .collect();
+    let ref_bytes: Vec<u8> = ref_samples.iter().flat_map(|s| s.to_le_bytes()).collect();
 
     // ── Encoder ────────────────────────────────────────────────────────
     let mut enc_params = CodecParameters::audio(CodecId::new("aac"));
@@ -168,7 +158,11 @@ fn aac_roundtrip_snr_ge_25db() {
         .step_by(CH as usize)
         .copied()
         .collect();
-    let dec_left: Vec<f32> = decoded_samples.iter().step_by(CH as usize).copied().collect();
+    let dec_left: Vec<f32> = decoded_samples
+        .iter()
+        .step_by(CH as usize)
+        .copied()
+        .collect();
     let dec_right: Vec<f32> = decoded_samples
         .iter()
         .skip(1)

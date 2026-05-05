@@ -29,8 +29,8 @@
 
 /// Sample-rate index table (ISO/IEC 14496-3 §1.6.2).
 pub const SAMPLE_RATES: [u32; 13] = [
-    96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025,
-    8_000, 7_350,
+    96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000,
+    7_350,
 ];
 
 /// Return the ADTS sampling-frequency-index for a given sample rate, or
@@ -58,7 +58,11 @@ pub struct AdtsHeader {
 impl AdtsHeader {
     /// Byte length of just the header portion.
     pub fn header_len(&self) -> usize {
-        if self.protection_absent { 7 } else { 9 }
+        if self.protection_absent {
+            7
+        } else {
+            9
+        }
     }
 }
 
@@ -75,9 +79,8 @@ pub fn parse(data: &[u8]) -> Option<AdtsHeader> {
     let protection_absent = (data[1] & 0x01) != 0;
     let sampling_freq_index = (data[2] >> 2) & 0x0F;
     let channel_configuration = ((data[2] & 0x01) << 2) | (data[3] >> 6);
-    let frame_length = ((data[3] as usize & 0x03) << 11)
-        | ((data[4] as usize) << 3)
-        | ((data[5] as usize) >> 5);
+    let frame_length =
+        ((data[3] as usize & 0x03) << 11) | ((data[4] as usize) << 3) | ((data[5] as usize) >> 5);
     Some(AdtsHeader {
         frame_length,
         protection_absent,
@@ -90,12 +93,7 @@ pub fn parse(data: &[u8]) -> Option<AdtsHeader> {
 /// bytes.
 ///
 /// `profile` is the AAC object type minus 1 (1 = AAC-LC).
-pub fn build_header(
-    payload_len: usize,
-    sf_index: u8,
-    channel_config: u8,
-    profile: u8,
-) -> [u8; 7] {
+pub fn build_header(payload_len: usize, sf_index: u8, channel_config: u8, profile: u8) -> [u8; 7] {
     let total = payload_len + 7;
     // protection_absent = 1 (no CRC), MPEG-4, layer = 0
     // Byte 0-1: syncword + id(0) + layer(00) + protection_absent(1)

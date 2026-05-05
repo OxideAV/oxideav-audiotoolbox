@@ -99,7 +99,7 @@ impl AudioStreamBasicDescription {
             sample_rate,
             format_id: K_AUDIO_FORMAT_MPEG4_AAC,
             format_flags: 0,
-            bytes_per_packet: 0,  // variable
+            bytes_per_packet: 0,     // variable
             frames_per_packet: 1024, // AAC LC
             bytes_per_frame: 0,
             channels_per_frame: channels,
@@ -251,12 +251,8 @@ pub unsafe fn audio_converter_set_property(
     in_data_size: u32,
     in_data: *const std::ffi::c_void,
 ) -> OSStatus {
-    type Fn = unsafe extern "C" fn(
-        AudioConverterRef,
-        u32,
-        u32,
-        *const std::ffi::c_void,
-    ) -> OSStatus;
+    type Fn =
+        unsafe extern "C" fn(AudioConverterRef, u32, u32, *const std::ffi::c_void) -> OSStatus;
     let f: libloading::Symbol<Fn> = fw
         .audio_toolbox
         .get(b"AudioConverterSetProperty\0")
@@ -275,12 +271,8 @@ pub unsafe fn audio_converter_get_property(
     io_data_size: *mut u32,
     out_data: *mut std::ffi::c_void,
 ) -> OSStatus {
-    type Fn = unsafe extern "C" fn(
-        AudioConverterRef,
-        u32,
-        *mut u32,
-        *mut std::ffi::c_void,
-    ) -> OSStatus;
+    type Fn =
+        unsafe extern "C" fn(AudioConverterRef, u32, *mut u32, *mut std::ffi::c_void) -> OSStatus;
     let f: libloading::Symbol<Fn> = fw
         .audio_toolbox
         .get(b"AudioConverterGetProperty\0")

@@ -10,14 +10,14 @@
 
 use std::ffi::c_void;
 
-use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 use oxideav_core::Decoder;
+use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 
 use crate::adts;
 use crate::adts::SAMPLE_RATES;
 use crate::sys::{
-    self, AudioBuffer, AudioBufferList1, AudioStreamBasicDescription, AudioStreamPacketDescription,
-    AudioConverterRef, NO_ERR,
+    self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
+    AudioStreamPacketDescription, NO_ERR,
 };
 
 /// State shared with the AudioConverter input callback.
@@ -77,8 +77,8 @@ impl AacAtDecoder {
 
     /// Initialise the AudioConverter from an ADTS header.
     fn configure(&mut self, hdr: &adts::AdtsHeader) -> Result<()> {
-        let fw = sys::framework()
-            .map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw =
+            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
 
         // Map ADTS sample-rate index → Hz.
         let sr = SAMPLE_RATES
@@ -100,14 +100,7 @@ impl AacAtDecoder {
         let out_asbd = AudioStreamBasicDescription::pcm_float32(sr as f64, ch);
 
         let mut converter: AudioConverterRef = std::ptr::null_mut();
-        let status = unsafe {
-            sys::audio_converter_new(
-                fw,
-                &in_asbd,
-                &out_asbd,
-                &mut converter,
-            )
-        };
+        let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
             return Err(Error::other(format!(
                 "AudioConverterNew failed: OSStatus {status}"
@@ -121,8 +114,8 @@ impl AacAtDecoder {
 
     /// Decode one ADTS frame and store the result in `self.pending`.
     fn decode_packet(&mut self, data: &[u8]) -> Result<()> {
-        let fw = sys::framework()
-            .map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw =
+            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
         let _ = fw; // borrow check — actually used in configure() and the unsafe call below
 
         let hdr = adts::parse(data).ok_or_else(|| Error::invalid("AT decoder: bad ADTS sync"))?;
@@ -171,8 +164,8 @@ impl AacAtDecoder {
             }],
         };
 
-        let fw = sys::framework()
-            .map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw =
+            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
 
         let status = unsafe {
             sys::audio_converter_fill_complex_buffer(
