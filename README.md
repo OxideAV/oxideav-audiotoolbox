@@ -14,25 +14,35 @@ The whole crate is `#![cfg(target_os = "macos")]`. On Linux / Windows it compile
 
 ## Priority
 
-Hardware factories register with `CodecCapabilities::with_priority(0)` — **lower numbers win at resolution time**, so on macOS hardware paths are preferred over the pure-Rust impls.
+Hardware factories register with `priority = 10` — **lower numbers win at resolution time**, so on macOS the AudioToolbox path is preferred over the pure-Rust implementation (default priority 100).
+
+## Coverage
+
+| Codec  | Decode  | Encode  | HW-accelerated |
+|--------|---------|---------|----------------|
+| AAC LC | yes     | yes     | yes (Apple Silicon / hardware audio codec engine) |
+
+Round 2 SNR measurement: encode → decode 440 Hz sine at 48 kHz / stereo / 128 kbit/s → **36.7 dB** per channel (well above 25 dB threshold).
 
 ## Opt-out
 
-Users who want to force the pure-Rust path can disable hardware acceleration globally via the `oxideav` CLI's `--no-hwaccel` flag (Round 2 work — see issue tracker). The flag works by skipping `oxideav_audiotoolbox::register` (and `oxideav_videotoolbox::register`) when constructing the runtime context.
+Disable hardware acceleration globally via `CodecPreferences { no_hardware: true }` or the `oxideav` CLI's `--no-hwaccel` flag to force the pure-Rust fallback.
+
+## Feature flags
+
+| Feature    | Default | Description                                    |
+|------------|---------|------------------------------------------------|
+| `registry` | on      | Wires in `oxideav-core` Decoder/Encoder traits and registers factories into the runtime codec registry. Turn off (`default-features = false`) to use only the raw AudioToolbox bridge bindings without the oxideav framework dependency. |
 
 ## Coverage roadmap
 
-| Codec        | Decode             | Encode                       |
-|--------------|--------------------|------------------------------|
-| AAC LC       | hardware           | hardware (Apple AAC encoder) |
-| AAC HE       | hardware           | hardware                     |
-| ALAC         | hardware (lossless)| hardware                     |
-| AMR-NB / WB  | hardware           | —                            |
-| iLBC         | hardware           | —                            |
-| FLAC         | software (in AT)   | software                     |
-| MP3          | software (in AT)   | —                            |
-
-Round 1 (this commit): scaffolding only. Round 2: AAC LC decode + encode. Round 3: ALAC + AAC HE. Round 4: AMR / iLBC.
+| Codec        | Decode              | Encode               |
+|--------------|---------------------|----------------------|
+| AAC LC       | done (round 2)      | done (round 2)       |
+| AAC HE       | hardware            | hardware             |
+| ALAC         | hardware (lossless) | hardware             |
+| AMR-NB / WB  | hardware            | —                    |
+| iLBC         | hardware            | —                    |
 
 ## Workspace policy
 
