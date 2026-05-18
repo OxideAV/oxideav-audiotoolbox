@@ -26,6 +26,8 @@ pub type AudioConverterRef = *mut OpaqueAudioConverter;
 pub const K_AUDIO_FORMAT_LINEAR_PCM: u32 = 0x6C70636D; // 'lpcm'
 /// kAudioFormatMPEG4AAC
 pub const K_AUDIO_FORMAT_MPEG4_AAC: u32 = 0x61616320; // 'aac '
+/// kAudioFormatAppleLossless
+pub const K_AUDIO_FORMAT_APPLE_LOSSLESS: u32 = 0x616C6163; // 'alac'
 
 /// kAudioFormatFlagIsFloat
 pub const K_AF_FLAG_IS_FLOAT: u32 = 1 << 0;
@@ -36,6 +38,15 @@ pub const K_AF_FLAG_IS_SIGNED_INTEGER: u32 = 1 << 2;
 /// kAudioFormatFlagIsNonInterleaved
 pub const K_AF_FLAG_IS_NON_INTERLEAVED: u32 = 1 << 5;
 
+/// kAudioFormatFlagsAppleLossless16BitSourceData — used in `format_flags`
+/// of an ALAC ASBD to declare the underlying-PCM bit depth so that the
+/// converter can allocate the right state. AT defines four "source data"
+/// flag values (16/20/24/32) numbered 1..=4 in the framework headers.
+pub const K_AF_APPLE_LOSSLESS_16_BIT: u32 = 1;
+pub const K_AF_APPLE_LOSSLESS_20_BIT: u32 = 2;
+pub const K_AF_APPLE_LOSSLESS_24_BIT: u32 = 3;
+pub const K_AF_APPLE_LOSSLESS_32_BIT: u32 = 4;
+
 /// kAudioConverterEncodeBitRate
 pub const K_AUDIO_CONVERTER_ENCODE_BIT_RATE: u32 = 0x62726174; // 'brat'
 
@@ -44,6 +55,15 @@ pub const K_AUDIO_CONVERTER_MAX_OUTPUT_PACKET_SIZE: u32 = 0x786F7073; // 'xops'
 
 /// kAudioConverterCurrentInputStreamDescription
 pub const K_AUDIO_CONVERTER_CURRENT_INPUT_SD: u32 = 0x61637364; // 'acsd'
+
+/// kAudioConverterDecompressionMagicCookie — set on a decoder converter
+/// before its first decode call.
+pub const K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE: u32 = 0x646D6763; // 'dmgc'
+
+/// kAudioConverterCompressionMagicCookie — read from an encoder converter
+/// after it has been configured. The value is the encoder-vended magic
+/// cookie (for ALAC: 24 or 48 bytes).
+pub const K_AUDIO_CONVERTER_COMPRESSION_MAGIC_COOKIE: u32 = 0x636D6763; // 'cmgc'
 
 /// AudioStreamBasicDescription — the core format descriptor.
 #[repr(C)]
@@ -104,6 +124,31 @@ impl AudioStreamBasicDescription {
             bytes_per_frame: 0,
             channels_per_frame: channels,
             bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for Apple Lossless (compressed).
+    ///
+    /// `bit_depth_flag` is one of `K_AF_APPLE_LOSSLESS_*` and tells
+    /// AudioConverter the underlying source PCM bit depth (typically 16
+    /// or 24). `frames_per_packet` defaults to 4096 (the ALAC encoder's
+    /// canonical packet size; see ALACMagicCookieDescription).
+    pub fn apple_lossless(
+        sample_rate: f64,
+        channels: u32,
+        bit_depth_flag: u32,
+        frames_per_packet: u32,
+    ) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_APPLE_LOSSLESS,
+            format_flags: bit_depth_flag,
+            bytes_per_packet: 0, // variable, decided by entropy coder
+            frames_per_packet,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0, // ALAC sets this to 0 in the compressed ASBD
             reserved: 0,
         }
     }

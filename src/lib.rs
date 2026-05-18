@@ -21,6 +21,7 @@
 //! | Codec  | Decode  | Encode  | HW-accelerated |
 //! |--------|---------|---------|----------------|
 //! | AAC LC | yes     | yes     | yes (Apple Silicon hardware path) |
+//! | ALAC   | yes     | yes     | yes (lossless, S16 / S32 PCM)     |
 //!
 //! # Workspace policy
 //!
@@ -29,8 +30,13 @@
 //! workspace's clean-room rule does not apply.
 
 pub mod adts;
+pub mod alac;
 pub mod sys;
 
+#[cfg(feature = "registry")]
+pub mod alac_decoder;
+#[cfg(feature = "registry")]
+pub mod alac_encoder;
 #[cfg(feature = "registry")]
 pub mod decoder;
 #[cfg(feature = "registry")]
@@ -96,6 +102,51 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
             .capabilities(enc_caps)
             .encoder(encoder::make_encoder),
     );
+
+    register_alac(ctx);
+}
+
+/// Register Apple Lossless (ALAC) decoder + encoder factories.
+///
+/// Tags claimed:
+///
+/// * FourCC `'alac'` — used by MOV / MP4 / CAF sample-entry tables.
+/// * Matroska `A_ALAC` — Matroska's CodecID for ALAC tracks.
+///
+/// ALAC is lossless so `with_lossy(false)`. Priority matches AAC at 10
+/// so the HW path wins over any future pure-Rust ALAC implementation.
+#[cfg(feature = "registry")]
+fn register_alac(ctx: &mut oxideav_core::RuntimeContext) {
+    let cid = CodecId::new("alac");
+
+    let dec_caps = CodecCapabilities::audio("alac_audiotoolbox")
+        .with_lossy(false)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(8)
+        .with_max_sample_rate(384_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid.clone())
+            .capabilities(dec_caps)
+            .decoder(alac_decoder::make_decoder)
+            .tags([CodecTag::fourcc(b"alac"), CodecTag::matroska("A_ALAC")]),
+    );
+
+    let enc_caps = CodecCapabilities::audio("alac_audiotoolbox")
+        .with_lossy(false)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(8)
+        .with_max_sample_rate(384_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid)
+            .capabilities(enc_caps)
+            .encoder(alac_encoder::make_encoder),
+    );
 }
 
 #[cfg(feature = "registry")]
@@ -118,6 +169,21 @@ mod register_tests {
         assert!(
             ctx.codecs.has_encoder(&id),
             "AAC encoder not registered after register()"
+        );
+    }
+
+    #[test]
+    fn register_installs_alac_factories() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        let id = CodecId::new("alac");
+        assert!(
+            ctx.codecs.has_decoder(&id),
+            "ALAC decoder not registered after register()"
+        );
+        assert!(
+            ctx.codecs.has_encoder(&id),
+            "ALAC encoder not registered after register()"
         );
     }
 }

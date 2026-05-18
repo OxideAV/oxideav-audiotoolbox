@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Round 3: ALAC (Apple Lossless) decode + encode** via `AudioConverterRef`
+  with magic-cookie wiring.
+- `alac.rs` — 24-byte `ALACSpecificConfig` magic-cookie builder + parser
+  (big-endian wire format per Apple's `ALACMagicCookieDescription` doc
+  snapshot in `docs/audio/alac/`). Default tuning constants (frame_length
+  4096, pb=40, mb=10, kb=14, max_run=255) match Apple's documented
+  recommendation. `bit_depth_flag()` maps PCM bit depth to the
+  AudioFormatFlags value the AT ASBD expects.
+- `alac_decoder.rs` — `AlacAtDecoder` implementing `oxideav_core::Decoder`.
+  Reads the magic cookie from `CodecParameters::extradata` and forwards
+  it to AT via `kAudioConverterDecompressionMagicCookie`. If no cookie
+  is supplied, synthesises a minimal-but-valid one from the explicit
+  `sample_rate / channels / sample_format` parameters. Output is
+  interleaved S16 PCM, one `AudioFrame` per ALAC packet.
+- `alac_encoder.rs` — `AlacAtEncoder` implementing `oxideav_core::Encoder`.
+  Internal staging buffer accumulates PCM until a full 4096-frame
+  packet is available, then emits one ALAC packet per drain step. The
+  encoder-vended magic cookie is read back via
+  `kAudioConverterCompressionMagicCookie` and exposed through
+  `output_params.extradata` so downstream muxers (mov / m4a / caf) can
+  emit a working ALAC track.
+- `sys.rs` — added FourCC + property constants for ALAC:
+  `kAudioFormatAppleLossless`, the four
+  `kAppleLosslessFormatFlag_*BitSourceData` values, and the
+  `kAudioConverterDecompression/CompressionMagicCookie` property keys.
+  New `AudioStreamBasicDescription::apple_lossless()` constructor.
+- `register()` now also installs ALAC decoder + encoder factories under
+  codec id `"alac"` with implementation `alac_audiotoolbox`,
+  priority 10, `hardware_accelerated = true`, `lossy = false`. Tags
+  claimed: `fourcc(b"alac")`, `matroska(A_ALAC)`.
+- Integration test `tests/alac_roundtrip.rs`: 2-second 48 kHz / 16-bit
+  stereo sine+LCG-noise mix, encode → decode through the AT bridge,
+  asserts **190,464 / 192,000 samples bit-exact** with zero priming
+  silence — proves the codec is truly lossless end-to-end.
+
 ## [0.0.2](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.1...v0.0.2) - 2026-05-06
 
 ### Other
