@@ -27,14 +27,18 @@ Hardware factories register with `priority = 10` — **lower numbers win at reso
 
 ## Coverage
 
-| Codec  | Decode  | Encode  | HW-accelerated |
-|--------|---------|---------|----------------|
-| AAC LC | yes     | yes     | yes (Apple Silicon / hardware audio codec engine) |
-| ALAC   | yes     | yes     | yes (lossless, S16 / S32 PCM)                     |
+| Codec     | Decode  | Encode  | HW-accelerated |
+|-----------|---------|---------|----------------|
+| AAC LC    | yes     | yes     | yes (Apple Silicon / hardware audio codec engine) |
+| HE-AAC v1 | yes     | yes     | yes (LC + SBR, 2× frame upsample)                  |
+| HE-AAC v2 | yes     | yes     | yes (LC + SBR + Parametric Stereo, stereo only)    |
+| ALAC      | yes     | yes     | yes (lossless, S16 / S32 PCM)                     |
 
 Round 2 SNR measurement: encode → decode 440 Hz sine at 48 kHz / stereo / 128 kbit/s → **36.7 dB** per channel (well above 25 dB threshold).
 
 Round 3 ALAC round-trip: encode → decode a 2-second sine+LCG-noise mix at 48 kHz / 16-bit stereo, **190,464 / 192,000 samples bit-exact** (zero priming silence on the AT path) — proves the encoder's vended magic cookie + decoder property wiring is correctly wired and the codec is truly lossless end-to-end.
+
+Round 4 HE-AAC round-trip: encode → decode a 2-second 1 kHz sine at 48 kHz / stereo, **HE-v1 @ 64 kbit/s ≈ 11 dB SNR, HE-v2 @ 32 kbit/s ≈ 10 dB SNR** per channel — SBR's patch-and-scale upper-band reconstruction caps recoverable phase fidelity well below transparency, so the test asserts only that the pipeline is wired correctly (the framework's encoder quality is not under our control). Profile selection is via `CodecParameters::options.insert("profile", "he" | "he-v2")`. HE encoder publishes a 42-byte ISO/IEC 14496-1 esds descriptor (AOT extension) through `output_params.extradata`; the matching decoder consumes it via `kAudioConverterDecompressionMagicCookie` to bypass the `kAudioCodecBadDataError` (`'bada'`) rejection that plain AAC LC config triggers on HE bitstreams.
 
 ## Opt-out
 
@@ -52,9 +56,13 @@ Disable hardware acceleration globally via `CodecPreferences { no_hardware: true
 |--------------|---------------------|----------------------|
 | AAC LC       | done (round 2)      | done (round 2)       |
 | ALAC         | done (round 3)      | done (round 3)       |
-| AAC HE       | hardware            | hardware             |
-| AMR-NB / WB  | hardware            | —                    |
-| iLBC         | hardware            | —                    |
+| HE-AAC v1    | done (round 4)      | done (round 4)       |
+| HE-AAC v2    | done (round 4)      | done (round 4)       |
+| FLAC         | available (decode + encode via AudioConverter, macOS 13+) | available |
+| Opus         | available (decode + encode via AudioConverter)             | available |
+| MP3          | available (decode-only on macOS)                           | n/a       |
+| AMR-NB / WB  | available (decode-only on macOS)                           | n/a       |
+| iLBC         | available (decode + encode)                                 | available |
 
 ## Workspace policy
 

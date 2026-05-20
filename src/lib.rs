@@ -18,10 +18,12 @@
 //!
 //! # Coverage
 //!
-//! | Codec  | Decode  | Encode  | HW-accelerated |
-//! |--------|---------|---------|----------------|
-//! | AAC LC | yes     | yes     | yes (Apple Silicon hardware path) |
-//! | ALAC   | yes     | yes     | yes (lossless, S16 / S32 PCM)     |
+//! | Codec     | Decode  | Encode  | HW-accelerated |
+//! |-----------|---------|---------|----------------|
+//! | AAC LC    | yes     | yes     | yes (Apple Silicon hardware path)      |
+//! | HE-AAC v1 | yes     | yes     | yes (LC + SBR, 2× upsample)            |
+//! | HE-AAC v2 | yes     | yes     | yes (LC + SBR + Parametric Stereo)     |
+//! | ALAC      | yes     | yes     | yes (lossless, S16 / S32 PCM)          |
 //!
 //! # Workspace policy
 //!

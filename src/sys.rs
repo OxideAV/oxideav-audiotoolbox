@@ -26,6 +26,10 @@ pub type AudioConverterRef = *mut OpaqueAudioConverter;
 pub const K_AUDIO_FORMAT_LINEAR_PCM: u32 = 0x6C70636D; // 'lpcm'
 /// kAudioFormatMPEG4AAC
 pub const K_AUDIO_FORMAT_MPEG4_AAC: u32 = 0x61616320; // 'aac '
+/// kAudioFormatMPEG4AAC_HE  — HE-AAC v1 (AAC LC + SBR).
+pub const K_AUDIO_FORMAT_MPEG4_AAC_HE: u32 = 0x61616368; // 'aach'
+/// kAudioFormatMPEG4AAC_HE_V2  — HE-AAC v2 (AAC LC + SBR + Parametric Stereo).
+pub const K_AUDIO_FORMAT_MPEG4_AAC_HE_V2: u32 = 0x61616370; // 'aacp'
 /// kAudioFormatAppleLossless
 pub const K_AUDIO_FORMAT_APPLE_LOSSLESS: u32 = 0x616C6163; // 'alac'
 
@@ -121,6 +125,44 @@ impl AudioStreamBasicDescription {
             format_flags: 0,
             bytes_per_packet: 0,     // variable
             frames_per_packet: 1024, // AAC LC
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for MPEG-4 HE-AAC (LC + SBR).
+    ///
+    /// `sample_rate` is the **output** sample rate (the SBR-doubled rate).
+    /// HE-AAC's framesPerPacket is `2048` because SBR doubles the
+    /// underlying 1024-sample AAC LC block.
+    pub fn mpeg4_aac_he(sample_rate: f64, channels: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_MPEG4_AAC_HE,
+            format_flags: 0,
+            bytes_per_packet: 0,
+            frames_per_packet: 2048,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for MPEG-4 HE-AAC v2 (LC + SBR + Parametric Stereo).
+    ///
+    /// `channels` must be `2` — HE-AAC v2 only makes sense for stereo
+    /// because PS encodes a mono down-mix plus parametric side
+    /// information. `frames_per_packet` is again 2048.
+    pub fn mpeg4_aac_he_v2(sample_rate: f64, channels: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_MPEG4_AAC_HE_V2,
+            format_flags: 0,
+            bytes_per_packet: 0,
+            frames_per_packet: 2048,
             bytes_per_frame: 0,
             channels_per_frame: channels,
             bits_per_channel: 0,

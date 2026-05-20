@@ -9,8 +9,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Round 3: ALAC (Apple Lossless) decode + encode** via `AudioConverterRef`
-  with magic-cookie wiring.
+- **Round 4: HE-AAC v1 + v2 encode + decode** via `AudioConverterRef`.
+  Adds the `kAudioFormatMPEG4AAC_HE` (`'aach'`) and
+  `kAudioFormatMPEG4AAC_HE_V2` (`'aacp'`) format IDs with matching
+  `AudioStreamBasicDescription::mpeg4_aac_he` / `mpeg4_aac_he_v2`
+  constructors (2048 PCM frames per packet, reflecting the SBR 2×
+  upsample). Profile selection happens through
+  `CodecParameters::options.get("profile")`: `"lc"` (default), `"he"`,
+  `"he-v2"`. New `AacProfile` enum exported from `encoder` for
+  programmatic use; HE-v2 mono is rejected at construction time per
+  the spec (PS only meaningful for stereo).
+- **Encoder magic cookie**: the AAC encoder now reads back its
+  vended ISO/IEC 14496-1 `esds` descriptor via
+  `kAudioConverterCompressionMagicCookie` and exposes it through
+  `output_params.extradata` (42 bytes for HE / HE-v2, 2 bytes for
+  bare LC AudioSpecificConfig). Required for downstream HE-AAC
+  decode because the AOT extension descriptor is not present in
+  any ADTS-like framing.
+- **Decoder magic cookie**: the AAC decoder accepts the cookie via
+  `CodecParameters::extradata` and forwards it through
+  `kAudioConverterDecompressionMagicCookie`. Without the cookie,
+  AT rejects HE / HE-v2 bitstreams with `kAudioCodecBadDataError`
+  (`'bada'`).
+- **HE / HE-v2 output framing**: HE-AAC packets are emitted as raw
+  AAC bytes (no ADTS wrapper). ADTS only carries the base AAC LC
+  profile bits, so wrapping HE-AAC payload in an ADTS header would
+  be misleading and trigger decoder mis-identification. The
+  encoder's `output_params.extradata` carries the AOT extension
+  descriptor needed by downstream consumers. LC encode still emits
+  the 7-byte ADTS header for back-compat with stock AAC decoders.
+- **Encoder PCM staging buffer** and **decoder input packet queue**:
+  both sides now keep enough lookahead beyond the immediate work
+  unit to satisfy AT's HE-AAC SBR analysis without ever returning
+  "0 packets" from the input callback mid-stream (which would put
+  AT into a permanent EOS state and silently halt output). Tuned
+  to 5 packets of PCM (encoder) / 4 packets of compressed input
+  (decoder) — empirically matches AT's HE-AAC lookahead.
+- `encoder.rs` now publishes `output_params` with `sample_rate`,
+  `channels`, `bit_rate`, `extradata`, and `options["profile"]`
+  echoed back so a downstream consumer (e.g. an MP4 muxer or a
+  paired decoder) can reconstruct full configuration from the
+  encoder's vended values alone.
+- Integration test `tests/he_aac_roundtrip.rs` with three cases:
+  - `he_aac_v1_roundtrip` — 2-second 1 kHz sine, 48 kHz stereo @
+    64 kbit/s HE-AAC, encode → decode → per-channel SNR ≥ 8 dB
+    (measured: ~11 dB; SBR's patch-and-scale reconstruction caps
+    the recoverable phase fidelity below transparency).
+  - `he_aac_v2_roundtrip` — same signal @ 32 kbit/s HE-AAC v2 with
+    Parametric Stereo, per-channel SNR ≥ 6 dB (measured: ~10 dB).
+  - `he_aac_packets_have_nonzero_payloads` — sanity check that the
+    encoder emits ≥ 4 nonzero raw AAC packets within a 16k-frame
+    feed and that the cookie starts with `0x03` (ES_DescrTag).
+
+### Changed
+
+- AAC LC encoder semantics: `send_frame` now stages PCM in an
+  internal buffer and drains in `frames_per_packet`-sized chunks
+  rather than encoding one frame per send. Behaviour is identical
+  for callers that already submitted 1024-frame chunks; callers
+  passing differently-sized chunks now see the expected
+  packetisation. Required for HE / HE-v2 (which want 2048-frame
+  packets) but applied uniformly so the contract is consistent.
+- AAC LC decoder semantics: `send_packet` now queues the packet
+  and lets the converter pull from the queue across multiple
+  `FillComplexBuffer` calls, instead of feeding one packet per
+  call. PCM frames are accumulated into a queue drained by
+  `receive_frame`. Backwards compatible — `receive_frame` returns
+  the same frame sequence.
+- `encoder::flush()` drains AT's internal SBR lookahead with up to
+  16 zero-input `FillComplexBuffer` calls so the last few packets
+  of every stream are recovered. Without this drain, HE-AAC
+  streams lose ~4 trailing packets.
+- `decoder::flush()` mirrors the encoder: drains the AT decoder's
+  internal buffer with extra zero-input pulls.
+
+### Round 3 — ALAC (Apple Lossless) decode + encode
+
+- ALAC decode + encode via `AudioConverterRef` with magic-cookie wiring.
 - `alac.rs` — 24-byte `ALACSpecificConfig` magic-cookie builder + parser
   (big-endian wire format per Apple's `ALACMagicCookieDescription` doc
   snapshot in `docs/audio/alac/`). Default tuning constants (frame_length
