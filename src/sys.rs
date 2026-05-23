@@ -30,6 +30,10 @@ pub const K_AUDIO_FORMAT_MPEG4_AAC: u32 = 0x61616320; // 'aac '
 pub const K_AUDIO_FORMAT_MPEG4_AAC_HE: u32 = 0x61616368; // 'aach'
 /// kAudioFormatMPEG4AAC_HE_V2  — HE-AAC v2 (AAC LC + SBR + Parametric Stereo).
 pub const K_AUDIO_FORMAT_MPEG4_AAC_HE_V2: u32 = 0x61616370; // 'aacp'
+/// kAudioFormatMPEG4AAC_LD  — AAC Low Delay (AOT 23). 512-sample frames.
+pub const K_AUDIO_FORMAT_MPEG4_AAC_LD: u32 = 0x6161636C; // 'aacl'
+/// kAudioFormatMPEG4AAC_ELD  — AAC Enhanced Low Delay (AOT 39). 512-sample frames.
+pub const K_AUDIO_FORMAT_MPEG4_AAC_ELD: u32 = 0x61616365; // 'aace'
 /// kAudioFormatAppleLossless
 pub const K_AUDIO_FORMAT_APPLE_LOSSLESS: u32 = 0x616C6163; // 'alac'
 
@@ -163,6 +167,51 @@ impl AudioStreamBasicDescription {
             format_flags: 0,
             bytes_per_packet: 0,
             frames_per_packet: 2048,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for MPEG-4 AAC Low Delay (AOT 23).
+    ///
+    /// AAC-LD targets two-way conferencing: the analysis/synthesis window
+    /// is shortened so the algorithmic delay is ~20 ms at 48 kHz, against
+    /// AAC LC's ~100+ ms. AudioConverter packetises LD at **512 PCM frames
+    /// per packet** (no SBR doubling). There is no ADTS framing for LD —
+    /// callers configure decode via the magic cookie (AudioSpecificConfig
+    /// with AOT 23), exactly like HE-AAC.
+    pub fn mpeg4_aac_ld(sample_rate: f64, channels: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_MPEG4_AAC_LD,
+            format_flags: 0,
+            bytes_per_packet: 0,
+            frames_per_packet: 512,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for MPEG-4 AAC Enhanced Low Delay (AOT 39).
+    ///
+    /// AAC-ELD pushes the delay lower still (down to ~15 ms) by combining
+    /// the low-delay core with a delay-optimised SBR (LD-SBR). Despite the
+    /// optional SBR, AudioConverter still packetises ELD at **512 PCM
+    /// frames per packet** (the LD-SBR variant keeps the 512-sample core
+    /// frame), so the output sample rate equals the input rate — unlike
+    /// HE-AAC there is no 2× upsample at the converter boundary. Decode is
+    /// magic-cookie configured (AudioSpecificConfig with AOT 39).
+    pub fn mpeg4_aac_eld(sample_rate: f64, channels: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_MPEG4_AAC_ELD,
+            format_flags: 0,
+            bytes_per_packet: 0,
+            frames_per_packet: 512,
             bytes_per_frame: 0,
             channels_per_frame: channels,
             bits_per_channel: 0,
@@ -450,5 +499,29 @@ mod tests {
         assert_eq!(a.bits_per_channel, 32);
         assert_eq!(a.bytes_per_frame, 8); // 2 channels × 4 bytes
         assert_eq!(a.frames_per_packet, 1);
+    }
+
+    #[test]
+    fn asbd_aac_ld_geometry() {
+        let a = AudioStreamBasicDescription::mpeg4_aac_ld(48_000.0, 2);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_MPEG4_AAC_LD);
+        assert_eq!(a.frames_per_packet, 512); // low-delay core, no SBR doubling
+        assert_eq!(a.channels_per_frame, 2);
+        assert_eq!(a.bytes_per_packet, 0); // compressed, variable
+    }
+
+    #[test]
+    fn asbd_aac_eld_geometry() {
+        let a = AudioStreamBasicDescription::mpeg4_aac_eld(48_000.0, 2);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_MPEG4_AAC_ELD);
+        assert_eq!(a.frames_per_packet, 512);
+        assert_eq!(a.channels_per_frame, 2);
+    }
+
+    #[test]
+    fn ld_eld_fourcc_values() {
+        // Spell out the FourCC byte mapping so a typo can't slip through.
+        assert_eq!(K_AUDIO_FORMAT_MPEG4_AAC_LD, u32::from_be_bytes(*b"aacl"));
+        assert_eq!(K_AUDIO_FORMAT_MPEG4_AAC_ELD, u32::from_be_bytes(*b"aace"));
     }
 }

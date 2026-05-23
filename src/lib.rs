@@ -23,6 +23,8 @@
 //! | AAC LC    | yes     | yes     | yes (Apple Silicon hardware path)      |
 //! | HE-AAC v1 | yes     | yes     | yes (LC + SBR, 2× upsample)            |
 //! | HE-AAC v2 | yes     | yes     | yes (LC + SBR + Parametric Stereo)     |
+//! | AAC-LD    | yes     | yes     | yes (low-delay AOT 23, 512-frame core) |
+//! | AAC-ELD   | yes     | yes     | yes (enhanced low-delay AOT 39)        |
 //! | ALAC      | yes     | yes     | yes (lossless, S16 / S32 PCM)          |
 //!
 //! # Workspace policy
@@ -154,7 +156,13 @@ fn register_alac(ctx: &mut oxideav_core::RuntimeContext) {
 #[cfg(feature = "registry")]
 oxideav_core::register!("audiotoolbox", register);
 
-#[cfg(test)]
+// `register_tests` exercises the `register()` entry point, which only
+// exists under the `registry` feature. Without this gate, a macOS
+// `--no-default-features` test build fails to compile (the symbols are
+// absent). CI's standalone job runs on Linux where the whole
+// `#![cfg(target_os = "macos")]` crate compiles away, so it never hit
+// this — but a local macOS standalone `cargo test --lib` did.
+#[cfg(all(test, feature = "registry"))]
 mod register_tests {
     use super::*;
     use oxideav_core::{CodecId, RuntimeContext};

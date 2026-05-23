@@ -25,15 +25,22 @@ use crate::sys::{
 /// * `"lc"` (default) — AAC LC: 1024 PCM samples/frame, ADTS profile = 1.
 /// * `"he"` / `"he-v1"` — HE-AAC v1 (LC + SBR), 2048 PCM samples/frame.
 /// * `"he-v2"` — HE-AAC v2 (LC + SBR + Parametric Stereo), stereo only.
+/// * `"ld"` — AAC Low Delay (AOT 23), 512 PCM samples/frame.
+/// * `"eld"` — AAC Enhanced Low Delay (AOT 39), 512 PCM samples/frame.
 ///
 /// HE / HE-v2 use ADTS profile bits = 1 (AAC LC) per ISO/IEC 14496-3 §1.5.2.3:
 /// the SBR / PS extension is signalled in-band via the AOT extension
-/// payload, not via the ADTS header.
+/// payload, not via the ADTS header. LD / ELD likewise have no ADTS
+/// representation (ADTS profile bits only encode Main/LC/SSR/LTP), so
+/// they are emitted as raw AAC bytes with the AOT carried in the magic
+/// cookie — the same out-of-band path HE uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AacProfile {
     Lc,
     He,
     HeV2,
+    Ld,
+    Eld,
 }
 
 impl AacProfile {
@@ -42,17 +49,28 @@ impl AacProfile {
         match opt {
             Some("he") | Some("he-v1") | Some("HE") => Self::He,
             Some("he-v2") | Some("HEv2") | Some("HE-v2") => Self::HeV2,
+            Some("ld") | Some("LD") | Some("aac-ld") => Self::Ld,
+            Some("eld") | Some("ELD") | Some("aac-eld") => Self::Eld,
             _ => Self::Lc,
         }
     }
 
     /// Frames per AAC packet at the **output** sample rate. LC = 1024,
-    /// HE / HE-v2 = 2048 (SBR doubles the underlying frame).
+    /// HE / HE-v2 = 2048 (SBR doubles the underlying frame), LD / ELD =
+    /// 512 (shortened low-delay core, no upsample at the converter).
     pub fn frames_per_packet(self) -> u32 {
         match self {
             Self::Lc => 1024,
             Self::He | Self::HeV2 => 2048,
+            Self::Ld | Self::Eld => 512,
         }
+    }
+
+    /// True for profiles AT emits as raw AAC bytes (no ADTS framing).
+    /// Only bare LC is wrapped in a 7-byte ADTS header; every extended
+    /// AOT (HE / HE-v2 / LD / ELD) is raw + magic-cookie configured.
+    fn is_raw(self) -> bool {
+        !matches!(self, Self::Lc)
     }
 }
 
@@ -143,8 +161,11 @@ impl AacAtEncoder {
         let default_bitrate = match profile {
             // HE-AAC v1 typically targets 32-64 kbit/s for stereo at high
             // perceived quality; HE-AAC v2 lower still. Don't pick a
-            // value that the encoder will instantly reject.
-            AacProfile::Lc => DEFAULT_BITRATE_BPS,
+            // value that the encoder will instantly reject. LD / ELD are
+            // conferencing codecs that run at full-band bitrates similar
+            // to LC (the win is delay, not compression), so keep them at
+            // the LC default.
+            AacProfile::Lc | AacProfile::Ld | AacProfile::Eld => DEFAULT_BITRATE_BPS,
             AacProfile::He => 64_000,
             AacProfile::HeV2 => 32_000,
         };
@@ -193,6 +214,8 @@ impl AacAtEncoder {
             AacProfile::Lc => AudioStreamBasicDescription::mpeg4_aac(sr as f64, ch),
             AacProfile::He => AudioStreamBasicDescription::mpeg4_aac_he(sr as f64, ch),
             AacProfile::HeV2 => AudioStreamBasicDescription::mpeg4_aac_he_v2(sr as f64, ch),
+            AacProfile::Ld => AudioStreamBasicDescription::mpeg4_aac_ld(sr as f64, ch),
+            AacProfile::Eld => AudioStreamBasicDescription::mpeg4_aac_eld(sr as f64, ch),
         };
 
         let mut converter: AudioConverterRef = std::ptr::null_mut();
@@ -254,6 +277,12 @@ impl AacAtEncoder {
             AacProfile::HeV2 => {
                 out_params.options.insert("profile", "he-v2");
             }
+            AacProfile::Ld => {
+                out_params.options.insert("profile", "ld");
+            }
+            AacProfile::Eld => {
+                out_params.options.insert("profile", "eld");
+            }
         }
 
         Ok(Self {
@@ -295,6 +324,11 @@ impl AacAtEncoder {
         let lookahead = match self.profile {
             AacProfile::Lc => 1,
             AacProfile::He | AacProfile::HeV2 => 5,
+            // LD / ELD have a small low-delay analysis window (a few
+            // hundred samples), well under one 512-frame packet, but keep
+            // 2 packets of slack so the callback never returns 0 mid-stream
+            // and forces AT into a premature EOS.
+            AacProfile::Ld | AacProfile::Eld => 2,
         };
         let needed_bytes = packet_bytes * lookahead;
         if self.staging.len() < needed_bytes {
@@ -353,7 +387,7 @@ impl AacAtEncoder {
         let fw =
             sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
 
-        let prefix = if self.profile == AacProfile::Lc { 7 } else { 0 };
+        let prefix = if self.profile.is_raw() { 0 } else { 7 };
         let out_size = self.max_packet_bytes as usize;
         let mut out_buf = vec![0u8; out_size + prefix];
         let raw_aac_ptr = out_buf[prefix..].as_mut_ptr();
@@ -391,12 +425,12 @@ impl AacAtEncoder {
             return Ok(());
         }
 
-        let total = if self.profile == AacProfile::Lc {
+        let total = if self.profile.is_raw() {
+            raw_len
+        } else {
             let hdr = adts::build_header(raw_len, self.sf_index, self.channel_config, 1);
             out_buf[..7].copy_from_slice(&hdr);
             7 + raw_len
-        } else {
-            raw_len
         };
         out_buf.truncate(total);
 
@@ -417,7 +451,7 @@ impl AacAtEncoder {
         let fw =
             sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
 
-        let prefix = if self.profile == AacProfile::Lc { 7 } else { 0 };
+        let prefix = if self.profile.is_raw() { 0 } else { 7 };
         let out_size = self.max_packet_bytes as usize;
         let mut out_buf = vec![0u8; out_size + prefix];
         let raw_aac_ptr = out_buf[prefix..].as_mut_ptr();
@@ -463,12 +497,12 @@ impl AacAtEncoder {
             return Ok(());
         }
 
-        let total = if self.profile == AacProfile::Lc {
+        let total = if self.profile.is_raw() {
+            raw_len
+        } else {
             let hdr = adts::build_header(raw_len, self.sf_index, self.channel_config, 1);
             out_buf[..7].copy_from_slice(&hdr);
             7 + raw_len
-        } else {
-            raw_len
         };
         out_buf.truncate(total);
 
@@ -706,6 +740,12 @@ mod tests {
         assert_eq!(AacProfile::parse(Some("HE")), AacProfile::He);
         assert_eq!(AacProfile::parse(Some("he-v2")), AacProfile::HeV2);
         assert_eq!(AacProfile::parse(Some("HEv2")), AacProfile::HeV2);
+        assert_eq!(AacProfile::parse(Some("ld")), AacProfile::Ld);
+        assert_eq!(AacProfile::parse(Some("LD")), AacProfile::Ld);
+        assert_eq!(AacProfile::parse(Some("aac-ld")), AacProfile::Ld);
+        assert_eq!(AacProfile::parse(Some("eld")), AacProfile::Eld);
+        assert_eq!(AacProfile::parse(Some("ELD")), AacProfile::Eld);
+        assert_eq!(AacProfile::parse(Some("aac-eld")), AacProfile::Eld);
         // Unknown values fall back to LC.
         assert_eq!(AacProfile::parse(Some("xyz")), AacProfile::Lc);
     }
@@ -715,6 +755,38 @@ mod tests {
         assert_eq!(AacProfile::Lc.frames_per_packet(), 1024);
         assert_eq!(AacProfile::He.frames_per_packet(), 2048);
         assert_eq!(AacProfile::HeV2.frames_per_packet(), 2048);
+        assert_eq!(AacProfile::Ld.frames_per_packet(), 512);
+        assert_eq!(AacProfile::Eld.frames_per_packet(), 512);
+    }
+
+    #[test]
+    fn profile_is_raw() {
+        // Only bare LC gets an ADTS header; every extended AOT is raw.
+        assert!(!AacProfile::Lc.is_raw());
+        assert!(AacProfile::He.is_raw());
+        assert!(AacProfile::HeV2.is_raw());
+        assert!(AacProfile::Ld.is_raw());
+        assert!(AacProfile::Eld.is_raw());
+    }
+
+    fn params_ld_48k_stereo() -> CodecParameters {
+        let mut p = params_48k_stereo();
+        p.options.insert("profile", "ld");
+        p
+    }
+
+    #[test]
+    fn make_encoder_ld() {
+        let r = make_encoder(&params_ld_48k_stereo());
+        assert!(r.is_ok(), "AAC-LD make_encoder failed: {:?}", r.err());
+    }
+
+    #[test]
+    fn make_encoder_eld() {
+        let mut p = params_48k_stereo();
+        p.options.insert("profile", "eld");
+        let r = make_encoder(&p);
+        assert!(r.is_ok(), "AAC-ELD make_encoder failed: {:?}", r.err());
     }
 
     fn params_he_48k_stereo() -> CodecParameters {

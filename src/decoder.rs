@@ -163,6 +163,13 @@ impl AacAtDecoder {
                 AudioStreamBasicDescription::mpeg4_aac_he_v2((sr * 2) as f64, ch),
                 sr * 2,
             ),
+            // LD / ELD have no SBR upsample at the converter boundary: the
+            // configured rate IS the output rate (512-frame low-delay core).
+            AacProfile::Ld => (AudioStreamBasicDescription::mpeg4_aac_ld(sr as f64, ch), sr),
+            AacProfile::Eld => (
+                AudioStreamBasicDescription::mpeg4_aac_eld(sr as f64, ch),
+                sr,
+            ),
         };
         let out_asbd = AudioStreamBasicDescription::pcm_float32(out_sr as f64, ch);
         self.sample_rate = out_sr;
@@ -230,7 +237,9 @@ impl AacAtDecoder {
                 let header_len = hdr.header_len();
                 data[header_len..hdr.frame_length].to_vec()
             }
-            AacProfile::He | AacProfile::HeV2 => {
+            // HE / HE-v2 / LD / ELD all carry their AOT out-of-band in
+            // the magic cookie and arrive as raw AAC bytes (no ADTS).
+            AacProfile::He | AacProfile::HeV2 | AacProfile::Ld | AacProfile::Eld => {
                 if !self.configured {
                     self.configure_from_cookie()?;
                 }
@@ -254,6 +263,9 @@ impl AacAtDecoder {
         let keep = match self.profile {
             AacProfile::Lc => 0,
             AacProfile::He | AacProfile::HeV2 => 4,
+            // LD / ELD have a short analysis window; 1 packet of slack is
+            // enough to keep the input callback from returning 0 mid-stream.
+            AacProfile::Ld | AacProfile::Eld => 1,
         };
         while self.input_queue.len() > keep {
             let made = self.pull_one_pcm_frame()?;

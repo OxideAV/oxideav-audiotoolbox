@@ -32,6 +32,8 @@ Hardware factories register with `priority = 10` — **lower numbers win at reso
 | AAC LC    | yes     | yes     | yes (Apple Silicon / hardware audio codec engine) |
 | HE-AAC v1 | yes     | yes     | yes (LC + SBR, 2× frame upsample)                  |
 | HE-AAC v2 | yes     | yes     | yes (LC + SBR + Parametric Stereo, stereo only)    |
+| AAC-LD    | yes     | yes     | yes (low-delay AOT 23, 512-frame core, ~20 ms)    |
+| AAC-ELD   | yes     | yes     | yes (enhanced low-delay AOT 39, 512-frame core)   |
 | ALAC      | yes     | yes     | yes (lossless, S16 / S32 PCM)                     |
 
 Round 2 SNR measurement: encode → decode 440 Hz sine at 48 kHz / stereo / 128 kbit/s → **36.7 dB** per channel (well above 25 dB threshold).
@@ -39,6 +41,8 @@ Round 2 SNR measurement: encode → decode 440 Hz sine at 48 kHz / stereo / 128 
 Round 3 ALAC round-trip: encode → decode a 2-second sine+LCG-noise mix at 48 kHz / 16-bit stereo, **190,464 / 192,000 samples bit-exact** (zero priming silence on the AT path) — proves the encoder's vended magic cookie + decoder property wiring is correctly wired and the codec is truly lossless end-to-end.
 
 Round 4 HE-AAC round-trip: encode → decode a 2-second 1 kHz sine at 48 kHz / stereo, **HE-v1 @ 64 kbit/s ≈ 11 dB SNR, HE-v2 @ 32 kbit/s ≈ 10 dB SNR** per channel — SBR's patch-and-scale upper-band reconstruction caps recoverable phase fidelity well below transparency, so the test asserts only that the pipeline is wired correctly (the framework's encoder quality is not under our control). Profile selection is via `CodecParameters::options.insert("profile", "he" | "he-v2")`. HE encoder publishes a 42-byte ISO/IEC 14496-1 esds descriptor (AOT extension) through `output_params.extradata`; the matching decoder consumes it via `kAudioConverterDecompressionMagicCookie` to bypass the `kAudioCodecBadDataError` (`'bada'`) rejection that plain AAC LC config triggers on HE bitstreams.
+
+Round 5 AAC-LD / AAC-ELD round-trip: encode → decode a 2-second 1 kHz sine at 48 kHz / stereo @ 128 kbit/s, **AAC-LD ≈ 29 dB SNR, AAC-ELD ≈ 26 dB SNR** per channel. These are the conferencing-oriented low-delay AOTs (`kAudioFormatMPEG4AAC_LD` = `'aacl'`, AOT 23; `kAudioFormatMPEG4AAC_ELD` = `'aace'`, AOT 39): the shortened analysis/synthesis window cuts algorithmic delay to ~15-20 ms (against AAC LC's ~100+ ms) — the win is latency, not compression, so they run at full-band LC-class bitrates and reach near-transparent SNR. AudioConverter packetises both at **512 PCM frames per packet** with **no SBR upsample** at the converter boundary (output rate = input rate). Selected via `CodecParameters::options.insert("profile", "ld" | "eld")`. Neither has an ADTS representation (ADTS profile bits encode only Main/LC/SSR/LTP), so — like HE — packets are emitted as raw AAC bytes and the AOT travels out-of-band in the encoder-vended magic cookie (`output_params.extradata`), consumed on decode via `kAudioConverterDecompressionMagicCookie`.
 
 ## Opt-out
 
@@ -58,6 +62,8 @@ Disable hardware acceleration globally via `CodecPreferences { no_hardware: true
 | ALAC         | done (round 3)      | done (round 3)       |
 | HE-AAC v1    | done (round 4)      | done (round 4)       |
 | HE-AAC v2    | done (round 4)      | done (round 4)       |
+| AAC-LD       | done (round 5)      | done (round 5)       |
+| AAC-ELD      | done (round 5)      | done (round 5)       |
 | FLAC         | available (decode + encode via AudioConverter, macOS 13+) | available |
 | Opus         | available (decode + encode via AudioConverter)             | available |
 | MP3          | available (decode-only on macOS)                           | n/a       |

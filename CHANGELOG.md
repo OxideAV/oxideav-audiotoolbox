@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 5: AAC-LD + AAC-ELD encode + decode** via `AudioConverterRef`.
+  Adds the `kAudioFormatMPEG4AAC_LD` (`'aacl'`, AOT 23) and
+  `kAudioFormatMPEG4AAC_ELD` (`'aace'`, AOT 39) format IDs with matching
+  `AudioStreamBasicDescription::mpeg4_aac_ld` / `mpeg4_aac_eld`
+  constructors (**512 PCM frames per packet** — the shortened low-delay
+  core, with no SBR upsample at the converter boundary, so the decoder's
+  output sample rate equals the configured input rate). Two new
+  `AacProfile` variants `Ld` / `Eld`, selected via
+  `CodecParameters::options.get("profile")` = `"ld"` / `"eld"` (also
+  `"LD"` / `"aac-ld"` / `"ELD"` / `"aac-eld"`).
+- **Raw-framing generalisation**: a private `AacProfile::is_raw()` now
+  drives the ADTS-vs-raw output decision. Only bare AAC LC is wrapped in
+  a 7-byte ADTS header; every extended AOT (HE / HE-v2 / LD / ELD) is
+  emitted as raw AAC bytes with the AOT carried out-of-band in the
+  encoder-vended magic cookie. LD / ELD have no ADTS representation
+  (ADTS profile bits encode only Main/LC/SSR/LTP), so the cookie path is
+  mandatory: the decoder forwards it via
+  `kAudioConverterDecompressionMagicCookie`, mirroring the HE path.
+- Integration test `tests/ld_aac_roundtrip.rs` with three cases:
+  - `aac_ld_roundtrip` — 2-second 1 kHz sine, 48 kHz stereo @
+    128 kbit/s AAC-LD, encode → decode → per-channel SNR ≥ 20 dB
+    (measured: ~29 dB; LD is near-transparent at full-band bitrates).
+  - `aac_eld_roundtrip` — same signal @ 128 kbit/s AAC-ELD, per-channel
+    SNR ≥ 12 dB (measured: ~26 dB).
+  - `ld_packets_have_nonzero_payloads` — sanity check that the encoder
+    emits ≥ 4 nonzero raw AAC packets and a non-empty magic cookie.
+- New unit tests for the `Ld` / `Eld` profile parse + frames-per-packet
+  (512), the `is_raw()` framing predicate, the two new ASBD geometries,
+  and the `'aacl'` / `'aace'` FourCC byte mappings.
+
+### Fixed
+
+- The `register_tests` module in `lib.rs` is now gated on
+  `#[cfg(all(test, feature = "registry"))]`. It references the
+  `registry`-only `register()` entry point and `oxideav_core`, so a
+  macOS `cargo test --no-default-features --lib` previously failed to
+  compile. (CI's standalone job runs on Linux, where the whole
+  `#![cfg(target_os = "macos")]` crate compiles away, so it never
+  surfaced there — but a local macOS standalone test build did.)
+
 - **Round 4: HE-AAC v1 + v2 encode + decode** via `AudioConverterRef`.
   Adds the `kAudioFormatMPEG4AAC_HE` (`'aach'`) and
   `kAudioFormatMPEG4AAC_HE_V2` (`'aacp'`) format IDs with matching
