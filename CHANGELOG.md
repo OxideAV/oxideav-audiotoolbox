@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **AAC encoder: `output_params.bit_rate` now reports AT's actual
+  delivered rate**, not the requested rate. AudioConverter quantises
+  the requested bitrate onto a per-profile / per-sample-rate grid
+  (e.g. AAC LC @ 48 kHz stereo accepts a limited set of values; off-grid
+  requests are silently rounded to the nearest supported point). The
+  encoder now queries `kAudioConverterEncodeBitRate` back after
+  `SetProperty` and publishes the post-quantisation value through
+  `output_params.bit_rate`. Falls back to the requested value if the
+  get-property query is unavailable (older macOS, exotic ASBD). Two new
+  regression tests pin the round-trip invariant — `bit_rate` published
+  through `output_params` is non-zero, equals the request for the
+  canonical 128 kbit/s LC operating point, and lands inside the
+  plausible 32k-260k band for off-grid requests.
+
 ### Added
 
 - **Round 5: AAC-LD + AAC-ELD encode + decode** via `AudioConverterRef`.
