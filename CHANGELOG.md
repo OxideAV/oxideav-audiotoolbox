@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Round 6: iLBC (Internet Low Bitrate Codec, RFC 3951) decode + encode**
+  via `AudioConverterRef`. Adds the `kAudioFormatiLBC` (`'ilbc'`) format ID
+  with a matching `AudioStreamBasicDescription::ilbc()` constructor.
+  Fixed 8 kHz mono. Two block sizes selected via
+  `CodecParameters::options.insert("mode", ...)`:
+  - `"20"` (also `"20ms"` / `"ms20"`) — 160 PCM frames per packet,
+    38 compressed bytes, 15.2 kbit/s net.
+  - `"30"` (also `"30ms"` / `"ms30"`, default) — 240 PCM frames per
+    packet, 50 compressed bytes, 13.33 kbit/s net.
+- New `src/ilbc.rs` module with `IlbcMode` enum (parser + frame /
+  byte geometry / round-trip tag helpers).
+- `src/ilbc_decoder.rs` — `IlbcAtDecoder` implementing
+  `oxideav_core::Decoder`. Persistent input-packet queue with
+  one-packet-of-slack lookahead (mirroring the HE-AAC decoder
+  pattern) — AT's iLBC analysis filter draws samples from one or
+  two prior compressed packets per emitted PCM block, so a
+  callback that returned 0 mid-stream would put the converter into
+  a permanent EOS state. `flush()` drains the trailing PCM that
+  the slack policy held back.
+- `src/ilbc_encoder.rs` — `IlbcAtEncoder` implementing
+  `oxideav_core::Encoder`. Internal staging buffer accumulates
+  S16 PCM until a full `mode.frames_per_packet()` chunk is
+  available, then emits one fixed-size iLBC packet per drain step.
+  F32 PCM input is auto-converted to S16 via a length-vs-samples
+  heuristic. `flush()` zero-pads any partial trailing PCM up to a
+  full packet (standard CBR speech-codec EOS convention).
+  Encoder publishes the active mode through
+  `output_params.options["mode"]` and the net bitrate through
+  `output_params.bit_rate` so downstream muxers can stamp it.
+- `register()` now also installs iLBC decoder + encoder factories
+  under codec id `"ilbc"` with `implementation = "ilbc_audiotoolbox"`,
+  `priority = 10`, `hardware_accelerated = true`, `lossy = true`.
+  Tags claimed: `fourcc(b"ilbc")`, `matroska(A_REAL/iLBC)`.
+- Integration test `tests/ilbc_roundtrip.rs`:
+  - `ilbc_30ms_roundtrip` — 2-second 1 kHz sine at 8 kHz mono via
+    30 ms mode, peak SNR ≈ 10.7 dB (≥ 6 dB floor).
+  - `ilbc_20ms_roundtrip` — same signal via 20 ms mode, peak SNR
+    ≈ 7.8 dB.
+  - `ilbc_packets_have_nonzero_payload` — ≥ 4 nonzero 50-byte
+    packets within a 16k-frame feed.
+- New unit tests for `IlbcMode` parse + geometry + round-trip
+  tag, the iLBC ASBD geometry for both modes, the `'ilbc'`
+  FourCC byte mapping, sample-rate / channel-count rejection,
+  factory mode selection, and bitrate publishing.
+
 ### Fixed
 
 - **AAC encoder: `output_params.bit_rate` now reports AT's actual

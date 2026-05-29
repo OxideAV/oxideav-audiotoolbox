@@ -36,6 +36,12 @@ pub const K_AUDIO_FORMAT_MPEG4_AAC_LD: u32 = 0x6161636C; // 'aacl'
 pub const K_AUDIO_FORMAT_MPEG4_AAC_ELD: u32 = 0x61616365; // 'aace'
 /// kAudioFormatAppleLossless
 pub const K_AUDIO_FORMAT_APPLE_LOSSLESS: u32 = 0x616C6163; // 'alac'
+/// kAudioFormatiLBC — narrow-band speech codec (RFC 3951). Apple's
+/// AudioToolbox identifier is the FourCC `'ilbc'`. iLBC is fixed at
+/// 8 kHz mono; the mode selector (20 ms vs 30 ms frame size) travels
+/// in the ASBD's `frames_per_packet` field (160 vs 240) — there is no
+/// magic cookie.
+pub const K_AUDIO_FORMAT_ILBC: u32 = 0x696C6263; // 'ilbc'
 
 /// kAudioFormatFlagIsFloat
 pub const K_AF_FLAG_IS_FLOAT: u32 = 1 << 0;
@@ -214,6 +220,37 @@ impl AudioStreamBasicDescription {
             frames_per_packet: 512,
             bytes_per_frame: 0,
             channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for iLBC (narrow-band speech).
+    ///
+    /// iLBC is fixed at **8 kHz mono**. Two block sizes are defined by
+    /// RFC 3951:
+    ///
+    /// * 20 ms — 160 PCM samples per packet, 38 compressed bytes
+    /// * 30 ms — 240 PCM samples per packet, 50 compressed bytes
+    ///
+    /// AudioConverter selects the mode from `frames_per_packet`. The
+    /// `bytes_per_packet` field is set to the fixed compressed-packet
+    /// size for each mode (iLBC is constant-bitrate). AT validates the
+    /// geometry against both fields during `AudioConverterNew`.
+    pub fn ilbc(frames_per_packet: u32) -> Self {
+        let bytes_per_packet = match frames_per_packet {
+            160 => 38, // 20 ms mode
+            240 => 50, // 30 ms mode
+            _ => 0,    // unknown mode — AT will reject the converter
+        };
+        Self {
+            sample_rate: 8_000.0,
+            format_id: K_AUDIO_FORMAT_ILBC,
+            format_flags: 0,
+            bytes_per_packet,
+            frames_per_packet,
+            bytes_per_frame: 0, // compressed, not meaningful
+            channels_per_frame: 1,
             bits_per_channel: 0,
             reserved: 0,
         }
@@ -516,6 +553,29 @@ mod tests {
         assert_eq!(a.format_id, K_AUDIO_FORMAT_MPEG4_AAC_ELD);
         assert_eq!(a.frames_per_packet, 512);
         assert_eq!(a.channels_per_frame, 2);
+    }
+
+    #[test]
+    fn asbd_ilbc_20ms_geometry() {
+        let a = AudioStreamBasicDescription::ilbc(160);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_ILBC);
+        assert_eq!(a.sample_rate, 8_000.0);
+        assert_eq!(a.channels_per_frame, 1);
+        assert_eq!(a.frames_per_packet, 160);
+        assert_eq!(a.bytes_per_packet, 38); // 20 ms iLBC packet
+    }
+
+    #[test]
+    fn asbd_ilbc_30ms_geometry() {
+        let a = AudioStreamBasicDescription::ilbc(240);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_ILBC);
+        assert_eq!(a.frames_per_packet, 240);
+        assert_eq!(a.bytes_per_packet, 50); // 30 ms iLBC packet
+    }
+
+    #[test]
+    fn ilbc_fourcc_value() {
+        assert_eq!(K_AUDIO_FORMAT_ILBC, u32::from_be_bytes(*b"ilbc"));
     }
 
     #[test]

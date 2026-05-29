@@ -26,6 +26,7 @@
 //! | AAC-LD    | yes     | yes     | yes (low-delay AOT 23, 512-frame core) |
 //! | AAC-ELD   | yes     | yes     | yes (enhanced low-delay AOT 39)        |
 //! | ALAC      | yes     | yes     | yes (lossless, S16 / S32 PCM)          |
+//! | iLBC      | yes     | yes     | yes (8 kHz mono, 20 ms + 30 ms modes)  |
 //!
 //! # Workspace policy
 //!
@@ -35,6 +36,7 @@
 
 pub mod adts;
 pub mod alac;
+pub mod ilbc;
 pub mod sys;
 
 #[cfg(feature = "registry")]
@@ -45,6 +47,10 @@ pub mod alac_encoder;
 pub mod decoder;
 #[cfg(feature = "registry")]
 pub mod encoder;
+#[cfg(feature = "registry")]
+pub mod ilbc_decoder;
+#[cfg(feature = "registry")]
+pub mod ilbc_encoder;
 
 #[cfg(feature = "registry")]
 use oxideav_core::{CodecCapabilities, CodecId, CodecInfo, CodecTag};
@@ -108,6 +114,7 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
     );
 
     register_alac(ctx);
+    register_ilbc(ctx);
 }
 
 /// Register Apple Lossless (ALAC) decoder + encoder factories.
@@ -153,6 +160,49 @@ fn register_alac(ctx: &mut oxideav_core::RuntimeContext) {
     );
 }
 
+/// Register iLBC (Internet Low Bitrate Codec) decoder + encoder
+/// factories. Fixed 8 kHz mono; the 20 ms vs 30 ms mode is carried in
+/// `CodecParameters::options["mode"]` (defaults to 30 ms).
+///
+/// Tags claimed:
+///
+/// * FourCC `'ilbc'` — AT's identifier; also used by some MOV / 3GPP
+///   sample-entry tables.
+/// * Matroska `A_REAL/iLBC` — Matroska's CodecID for iLBC tracks.
+#[cfg(feature = "registry")]
+fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext) {
+    let cid = CodecId::new("ilbc");
+
+    let dec_caps = CodecCapabilities::audio("ilbc_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(1)
+        .with_max_sample_rate(8_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid.clone())
+            .capabilities(dec_caps)
+            .decoder(ilbc_decoder::make_decoder)
+            .tags([CodecTag::fourcc(b"ilbc"), CodecTag::matroska("A_REAL/iLBC")]),
+    );
+
+    let enc_caps = CodecCapabilities::audio("ilbc_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(1)
+        .with_max_sample_rate(8_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid)
+            .capabilities(enc_caps)
+            .encoder(ilbc_encoder::make_encoder),
+    );
+}
+
 #[cfg(feature = "registry")]
 oxideav_core::register!("audiotoolbox", register);
 
@@ -194,6 +244,21 @@ mod register_tests {
         assert!(
             ctx.codecs.has_encoder(&id),
             "ALAC encoder not registered after register()"
+        );
+    }
+
+    #[test]
+    fn register_installs_ilbc_factories() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        let id = CodecId::new("ilbc");
+        assert!(
+            ctx.codecs.has_decoder(&id),
+            "iLBC decoder not registered after register()"
+        );
+        assert!(
+            ctx.codecs.has_encoder(&id),
+            "iLBC encoder not registered after register()"
         );
     }
 }
