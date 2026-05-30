@@ -27,6 +27,7 @@
 //! | AAC-ELD   | yes     | yes     | yes (enhanced low-delay AOT 39)        |
 //! | ALAC      | yes     | yes     | yes (lossless, S16 / S32 PCM)          |
 //! | iLBC      | yes     | yes     | yes (8 kHz mono, 20 ms + 30 ms modes)  |
+//! | AMR-NB    | yes     | n/a     | yes (8 kHz mono, 8 speech modes + SID, decode-only) |
 //!
 //! # Workspace policy
 //!
@@ -36,6 +37,7 @@
 
 pub mod adts;
 pub mod alac;
+pub mod amr;
 pub mod ilbc;
 pub mod sys;
 
@@ -43,6 +45,8 @@ pub mod sys;
 pub mod alac_decoder;
 #[cfg(feature = "registry")]
 pub mod alac_encoder;
+#[cfg(feature = "registry")]
+pub mod amr_decoder;
 #[cfg(feature = "registry")]
 pub mod decoder;
 #[cfg(feature = "registry")]
@@ -115,6 +119,7 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
 
     register_alac(ctx);
     register_ilbc(ctx);
+    register_amr_nb(ctx);
 }
 
 /// Register Apple Lossless (ALAC) decoder + encoder factories.
@@ -203,6 +208,35 @@ fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext) {
     );
 }
 
+/// Register AMR-NB (Adaptive Multi-Rate Narrowband) **decoder** factory.
+///
+/// AudioToolbox exposes `kAudioFormatAMR` (`'samr'`) as a decompression
+/// target but does not ship a paired encoder, so this registration is
+/// decode-only. Tags claimed:
+///
+/// * FourCC `'samr'` — the canonical 3GPP / ISOBMFF identifier; used by
+///   MOV / MP4 / 3GP sample-entry tables (`SampleEntry.format = 'samr'`).
+/// * Matroska `A_AMR/NB` — Matroska's CodecID for AMR-NB tracks.
+#[cfg(feature = "registry")]
+fn register_amr_nb(ctx: &mut oxideav_core::RuntimeContext) {
+    let cid = CodecId::new("amr_nb");
+
+    let dec_caps = CodecCapabilities::audio("amr_nb_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(1)
+        .with_max_sample_rate(8_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid)
+            .capabilities(dec_caps)
+            .decoder(amr_decoder::make_decoder)
+            .tags([CodecTag::fourcc(b"samr"), CodecTag::matroska("A_AMR/NB")]),
+    );
+}
+
 #[cfg(feature = "registry")]
 oxideav_core::register!("audiotoolbox", register);
 
@@ -259,6 +293,22 @@ mod register_tests {
         assert!(
             ctx.codecs.has_encoder(&id),
             "iLBC encoder not registered after register()"
+        );
+    }
+
+    #[test]
+    fn register_installs_amr_nb_decoder_only() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        let id = CodecId::new("amr_nb");
+        assert!(
+            ctx.codecs.has_decoder(&id),
+            "AMR-NB decoder not registered after register()"
+        );
+        // AT exposes AMR-NB decode only — encoder must NOT be present.
+        assert!(
+            !ctx.codecs.has_encoder(&id),
+            "AMR-NB encoder must not be registered (AT is decode-only)"
         );
     }
 }

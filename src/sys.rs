@@ -43,6 +43,16 @@ pub const K_AUDIO_FORMAT_APPLE_LOSSLESS: u32 = 0x616C6163; // 'alac'
 /// magic cookie.
 pub const K_AUDIO_FORMAT_ILBC: u32 = 0x696C6263; // 'ilbc'
 
+/// kAudioFormatAMR — Adaptive Multi-Rate Narrowband speech codec
+/// (3GPP TS 26.071 / RFC 4867). Apple's AudioToolbox identifier is
+/// the FourCC `'samr'`. AMR-NB is fixed at 8 kHz mono with a 20 ms
+/// analysis window (160 PCM samples per packet). The on-wire packet
+/// is variable-size: the first byte (TOC) selects one of 8 speech
+/// modes plus SID + NO_DATA, and the per-mode compressed byte count
+/// varies — AudioConverter reads the actual size from the
+/// AudioStreamPacketDescription supplied by the input callback.
+pub const K_AUDIO_FORMAT_AMR: u32 = 0x73616D72; // 'samr'
+
 /// kAudioFormatFlagIsFloat
 pub const K_AF_FLAG_IS_FLOAT: u32 = 1 << 0;
 /// kAudioFormatFlagIsPacked  (samples fill every bit of the word)
@@ -250,6 +260,29 @@ impl AudioStreamBasicDescription {
             bytes_per_packet,
             frames_per_packet,
             bytes_per_frame: 0, // compressed, not meaningful
+            channels_per_frame: 1,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for AMR-NB (Adaptive Multi-Rate Narrowband).
+    ///
+    /// AMR-NB is fixed at **8 kHz mono** with a **20 ms analysis frame**
+    /// (160 PCM samples per packet). The compressed byte count is
+    /// variable — it depends on the speech mode encoded in the TOC byte
+    /// of each packet — so `bytes_per_packet` is left at `0` (the AT
+    /// convention for variable-rate compressed inputs). The callback
+    /// supplying packets to `AudioConverterFillComplexBuffer` provides
+    /// the per-packet byte count through an `AudioStreamPacketDescription`.
+    pub fn amr_nb() -> Self {
+        Self {
+            sample_rate: 8_000.0,
+            format_id: K_AUDIO_FORMAT_AMR,
+            format_flags: 0,
+            bytes_per_packet: 0,    // variable per mode
+            frames_per_packet: 160, // 20 ms @ 8 kHz
+            bytes_per_frame: 0,     // compressed, not meaningful
             channels_per_frame: 1,
             bits_per_channel: 0,
             reserved: 0,
@@ -576,6 +609,21 @@ mod tests {
     #[test]
     fn ilbc_fourcc_value() {
         assert_eq!(K_AUDIO_FORMAT_ILBC, u32::from_be_bytes(*b"ilbc"));
+    }
+
+    #[test]
+    fn amr_fourcc_value() {
+        assert_eq!(K_AUDIO_FORMAT_AMR, u32::from_be_bytes(*b"samr"));
+    }
+
+    #[test]
+    fn asbd_amr_nb_geometry() {
+        let a = AudioStreamBasicDescription::amr_nb();
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_AMR);
+        assert_eq!(a.sample_rate, 8_000.0);
+        assert_eq!(a.channels_per_frame, 1);
+        assert_eq!(a.frames_per_packet, 160); // 20 ms @ 8 kHz
+        assert_eq!(a.bytes_per_packet, 0); // variable per mode
     }
 
     #[test]

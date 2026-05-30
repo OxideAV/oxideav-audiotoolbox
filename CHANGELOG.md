@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 7: AMR-NB (Adaptive Multi-Rate Narrowband, 3GPP TS 26.071 /
+  RFC 4867) decode** via `AudioConverterRef`. AudioToolbox exposes
+  `kAudioFormatAMR` (`'samr'`) as a **decode-only** target — there is
+  no paired AT encoder, so the registry installs only a decoder
+  factory under codec id `"amr_nb"` with
+  `implementation = "amr_nb_audiotoolbox"`, `priority = 10`,
+  `hardware_accelerated = true`, `lossy = true`. Tags claimed:
+  `fourcc(b"samr")` (3GPP / ISOBMFF) and `matroska(A_AMR/NB)`.
+- New `src/amr.rs` module exposing the `FrameType` enum (8 speech
+  modes — MR475 4.75 kbit/s through MR122 12.2 kbit/s — plus SID
+  and NO_DATA), the per-mode storage-format byte-count table
+  (1, 6, 13, 14, 16, 18, 20, 21, 27, 32 bytes per packet per RFC
+  4867 §5.1), TOC-byte parsing + builder (`from_toc` / `make_toc`),
+  per-mode bitrate lookup, and the `FRAMES_PER_PACKET = 160`
+  constant (20 ms @ 8 kHz analysis window).
+- `src/amr_decoder.rs` — `AmrNbAtDecoder` implementing
+  `oxideav_core::Decoder`. Validates each incoming packet against
+  its TOC-derived size table before queueing, returning
+  `Error::invalid` for reserved frame types (FT 9..=14) and for
+  size mismatches. Persistent input-packet queue with
+  one-packet-of-slack lookahead (matching the iLBC / HE-AAC
+  pattern) so AT never sees "0 packets" mid-stream. `flush()`
+  drains the trailing PCM held back by the slack policy.
+- New `K_AUDIO_FORMAT_AMR = 'samr'` constant + matching
+  `AudioStreamBasicDescription::amr_nb()` constructor in `sys.rs`
+  (8 kHz mono, `bytes_per_packet = 0` for variable-rate input,
+  `frames_per_packet = 160` for the AMR analysis window).
+- Integration test `tests/amr_nb_decode.rs`:
+  - `amr_nb_decoder_accepts_all_frame_types` — feeds one
+    syntactically-valid packet of every defined frame type
+    (NO_DATA, SID, MR475..MR122) and verifies PCM emerges
+    after `flush`.
+  - `amr_nb_decoder_handles_long_no_data_run` — drives 20
+    consecutive NO_DATA packets (the smallest variable-size
+    packet path) to exercise the 1-byte input-descriptor path.
+  - `amr_nb_decoder_rejects_size_mismatch` — pins the size-check
+    surface area (e.g. MR122 = 32 bytes; 31-byte packet refused).
+  - `amr_nb_decoder_rejects_reserved_frame_type` — pins the FT
+    validation surface area (FT 12 → `Error::invalid`).
+  - `amr_nb_decoder_reset_clears_state` — verifies `reset()`
+    re-arms the decoder for new packets after a previous run.
+- New unit tests for `FrameType::from_toc` + `bytes_per_packet`
+  + `bit_rate` + `make_toc` round-trip, the AMR-NB ASBD geometry,
+  the `'samr'` FourCC byte mapping, factory sample-rate /
+  channel-count rejection, factory acceptance of every defined
+  frame type, and registry presence (decoder only — encoder must
+  NOT be registered since AT is decode-only).
+- Empirical-finding note: AT's AMR-NB decoder vends PCM in
+  **120-sample S16 mono blocks** (15 ms at 8 kHz) per
+  `FillComplexBuffer` call rather than the 160-sample analysis-
+  frame size — an internal AT chunking detail. The test suite
+  asserts only the S16 mono byte-count invariant
+  (`af.samples × 2 == af.data[0].len()`) and ≥ 1 frame produced
+  rather than a fixed per-frame sample count.
+
 - **Round 6: iLBC (Internet Low Bitrate Codec, RFC 3951) decode + encode**
   via `AudioConverterRef`. Adds the `kAudioFormatiLBC` (`'ilbc'`) format ID
   with a matching `AudioStreamBasicDescription::ilbc()` constructor.
