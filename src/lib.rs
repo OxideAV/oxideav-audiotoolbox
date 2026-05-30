@@ -28,6 +28,7 @@
 //! | ALAC      | yes     | yes     | yes (lossless, S16 / S32 PCM)          |
 //! | iLBC      | yes     | yes     | yes (8 kHz mono, 20 ms + 30 ms modes)  |
 //! | AMR-NB    | yes     | n/a     | yes (8 kHz mono, 8 speech modes + SID, decode-only) |
+//! | AMR-WB    | yes     | n/a     | yes (16 kHz mono, 9 speech modes + SID, decode-only) |
 //!
 //! # Workspace policy
 //!
@@ -38,6 +39,7 @@
 pub mod adts;
 pub mod alac;
 pub mod amr;
+pub mod amr_wb;
 pub mod ilbc;
 pub mod sys;
 
@@ -47,6 +49,8 @@ pub mod alac_decoder;
 pub mod alac_encoder;
 #[cfg(feature = "registry")]
 pub mod amr_decoder;
+#[cfg(feature = "registry")]
+pub mod amr_wb_decoder;
 #[cfg(feature = "registry")]
 pub mod decoder;
 #[cfg(feature = "registry")]
@@ -120,6 +124,7 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
     register_alac(ctx);
     register_ilbc(ctx);
     register_amr_nb(ctx);
+    register_amr_wb(ctx);
 }
 
 /// Register Apple Lossless (ALAC) decoder + encoder factories.
@@ -237,6 +242,36 @@ fn register_amr_nb(ctx: &mut oxideav_core::RuntimeContext) {
     );
 }
 
+/// Register AMR-WB (Adaptive Multi-Rate Wideband) **decoder** factory.
+///
+/// AudioToolbox exposes `kAudioFormatAMR_WB` (`'sawb'`) as a
+/// decompression target but does not ship a paired encoder, so this
+/// registration is decode-only (mirroring the AMR-NB asymmetry). Tags
+/// claimed:
+///
+/// * FourCC `'sawb'` — the canonical 3GPP / ISOBMFF identifier; used
+///   by MOV / MP4 / 3GP sample-entry tables (`SampleEntry.format = 'sawb'`).
+/// * Matroska `A_AMR/WB` — Matroska's CodecID for AMR-WB tracks.
+#[cfg(feature = "registry")]
+fn register_amr_wb(ctx: &mut oxideav_core::RuntimeContext) {
+    let cid = CodecId::new("amr_wb");
+
+    let dec_caps = CodecCapabilities::audio("amr_wb_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(1)
+        .with_max_sample_rate(16_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid)
+            .capabilities(dec_caps)
+            .decoder(amr_wb_decoder::make_decoder)
+            .tags([CodecTag::fourcc(b"sawb"), CodecTag::matroska("A_AMR/WB")]),
+    );
+}
+
 #[cfg(feature = "registry")]
 oxideav_core::register!("audiotoolbox", register);
 
@@ -309,6 +344,22 @@ mod register_tests {
         assert!(
             !ctx.codecs.has_encoder(&id),
             "AMR-NB encoder must not be registered (AT is decode-only)"
+        );
+    }
+
+    #[test]
+    fn register_installs_amr_wb_decoder_only() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        let id = CodecId::new("amr_wb");
+        assert!(
+            ctx.codecs.has_decoder(&id),
+            "AMR-WB decoder not registered after register()"
+        );
+        // AT exposes AMR-WB decode only — encoder must NOT be present.
+        assert!(
+            !ctx.codecs.has_encoder(&id),
+            "AMR-WB encoder must not be registered (AT is decode-only)"
         );
     }
 }

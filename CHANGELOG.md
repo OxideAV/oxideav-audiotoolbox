@@ -21,6 +21,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 8: AMR-WB (Adaptive Multi-Rate Wideband, 3GPP TS 26.171 /
+  TS 26.201 / RFC 4867) decode** via `AudioConverterRef`. AudioToolbox
+  exposes `kAudioFormatAMR_WB` (`'sawb'`) as a **decode-only** target
+  — there is no paired AT encoder (same asymmetry as AMR-NB), so the
+  registry installs only a decoder factory under codec id `"amr_wb"`
+  with `implementation = "amr_wb_audiotoolbox"`, `priority = 10`,
+  `hardware_accelerated = true`, `lossy = true`. Tags claimed:
+  `fourcc(b"sawb")` (3GPP / ISOBMFF) and `matroska(A_AMR/WB)`.
+- New `src/amr_wb.rs` module exposing the `FrameType` enum (9 speech
+  modes — MR660 6.60 kbit/s through MR2385 23.85 kbit/s — plus SID
+  (FT=9) and NO_DATA (FT=15)), the per-mode storage-format byte-count
+  table (1, 6, 17, 23, 32, 36, 40, 46, 50, 58, 60 bytes per packet
+  per RFC 4867 §5.3), TOC-byte parsing + builder (`from_toc` /
+  `make_toc`), per-mode bitrate lookup, and the
+  `FRAMES_PER_PACKET = 320` constant (20 ms @ 16 kHz analysis window).
+- `src/amr_wb_decoder.rs` — `AmrWbAtDecoder` implementing
+  `oxideav_core::Decoder`. Validates each incoming packet against its
+  TOC-derived size table before queueing, returning `Error::invalid`
+  for reserved frame types (FT 10..=14 for AMR-WB — one fewer than
+  AMR-NB because AMR-WB has nine speech modes) and for size
+  mismatches. Persistent input-packet queue with one-packet-of-slack
+  lookahead matching the iLBC / AMR-NB / HE-AAC pattern so AT never
+  sees "0 packets" mid-stream. `flush()` drains the trailing PCM
+  held back by the slack policy.
+- New `K_AUDIO_FORMAT_AMR_WB = 'sawb'` constant + matching
+  `AudioStreamBasicDescription::amr_wb()` constructor in `sys.rs`
+  (16 kHz mono, `bytes_per_packet = 0` for variable-rate input,
+  `frames_per_packet = 320` for the 20 ms AMR-WB analysis window).
+- Integration test `tests/amr_wb_decode.rs`:
+  - `amr_wb_decoder_accepts_all_frame_types` — feeds one
+    syntactically-valid packet of every defined frame type
+    (NO_DATA, SID, MR660..MR2385) and verifies PCM emerges
+    (counted both mid-stream and after `flush`, since AT's
+    AMR-WB decoder may vend PCM eagerly rather than holding all
+    of it back for the slack-tail drain like AMR-NB does).
+  - `amr_wb_decoder_handles_long_no_data_run` — drives 20
+    consecutive NO_DATA packets to exercise the 1-byte
+    input-descriptor path.
+  - `amr_wb_decoder_rejects_size_mismatch` — pins the size-check
+    surface area (e.g. MR2385 = 60 bytes; 59-byte packet refused).
+  - `amr_wb_decoder_rejects_reserved_frame_type` — pins the FT
+    validation surface area (FT 13 → `Error::invalid`).
+  - `amr_wb_decoder_reset_clears_state` — verifies `reset()`
+    re-arms the decoder for new packets after a previous run.
+- New unit tests for `FrameType::from_toc` + `bytes_per_packet`
+  + `bit_rate` + `make_toc` round-trip + FT-index uniqueness, the
+  AMR-WB ASBD geometry, the `'sawb'` FourCC byte mapping, factory
+  sample-rate / channel-count rejection, factory acceptance of
+  every defined frame type, and registry presence (decoder only —
+  encoder must NOT be registered since AT is decode-only).
+
 - **Round 7: AMR-NB (Adaptive Multi-Rate Narrowband, 3GPP TS 26.071 /
   RFC 4867) decode** via `AudioConverterRef`. AudioToolbox exposes
   `kAudioFormatAMR` (`'samr'`) as a **decode-only** target — there is

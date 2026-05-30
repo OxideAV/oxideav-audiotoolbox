@@ -53,6 +53,18 @@ pub const K_AUDIO_FORMAT_ILBC: u32 = 0x696C6263; // 'ilbc'
 /// AudioStreamPacketDescription supplied by the input callback.
 pub const K_AUDIO_FORMAT_AMR: u32 = 0x73616D72; // 'samr'
 
+/// kAudioFormatAMR_WB — Adaptive Multi-Rate Wideband speech codec
+/// (3GPP TS 26.171 / TS 26.201 / RFC 4867). Apple's AudioToolbox
+/// identifier is the FourCC `'sawb'`. AMR-WB is fixed at 16 kHz mono
+/// with a 20 ms analysis window (320 PCM samples per packet). Like
+/// AMR-NB the on-wire packet is variable-size: the first byte (TOC)
+/// selects one of 9 speech modes (0..=8) plus SID (9) + NO_DATA (15),
+/// and the per-mode compressed byte count varies (17, 23, 32, 36, 40,
+/// 46, 50, 58, 60 for the speech modes, 6 for SID, 1 for NO_DATA per
+/// RFC 4867 §5.3). AudioConverter reads the actual size from the
+/// AudioStreamPacketDescription supplied by the input callback.
+pub const K_AUDIO_FORMAT_AMR_WB: u32 = 0x73617762; // 'sawb'
+
 /// kAudioFormatFlagIsFloat
 pub const K_AF_FLAG_IS_FLOAT: u32 = 1 << 0;
 /// kAudioFormatFlagIsPacked  (samples fill every bit of the word)
@@ -282,6 +294,28 @@ impl AudioStreamBasicDescription {
             format_flags: 0,
             bytes_per_packet: 0,    // variable per mode
             frames_per_packet: 160, // 20 ms @ 8 kHz
+            bytes_per_frame: 0,     // compressed, not meaningful
+            channels_per_frame: 1,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for AMR-WB (Adaptive Multi-Rate Wideband).
+    ///
+    /// AMR-WB is fixed at **16 kHz mono** with a **20 ms analysis frame**
+    /// (320 PCM samples per packet). Like AMR-NB the compressed byte
+    /// count varies per packet — the TOC byte selects one of 9 speech
+    /// modes plus SID / NO_DATA — so `bytes_per_packet` is left at `0`
+    /// and the input callback supplies the per-packet byte count through
+    /// the `AudioStreamPacketDescription`.
+    pub fn amr_wb() -> Self {
+        Self {
+            sample_rate: 16_000.0,
+            format_id: K_AUDIO_FORMAT_AMR_WB,
+            format_flags: 0,
+            bytes_per_packet: 0,    // variable per mode
+            frames_per_packet: 320, // 20 ms @ 16 kHz
             bytes_per_frame: 0,     // compressed, not meaningful
             channels_per_frame: 1,
             bits_per_channel: 0,
@@ -617,12 +651,27 @@ mod tests {
     }
 
     #[test]
+    fn amr_wb_fourcc_value() {
+        assert_eq!(K_AUDIO_FORMAT_AMR_WB, u32::from_be_bytes(*b"sawb"));
+    }
+
+    #[test]
     fn asbd_amr_nb_geometry() {
         let a = AudioStreamBasicDescription::amr_nb();
         assert_eq!(a.format_id, K_AUDIO_FORMAT_AMR);
         assert_eq!(a.sample_rate, 8_000.0);
         assert_eq!(a.channels_per_frame, 1);
         assert_eq!(a.frames_per_packet, 160); // 20 ms @ 8 kHz
+        assert_eq!(a.bytes_per_packet, 0); // variable per mode
+    }
+
+    #[test]
+    fn asbd_amr_wb_geometry() {
+        let a = AudioStreamBasicDescription::amr_wb();
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_AMR_WB);
+        assert_eq!(a.sample_rate, 16_000.0);
+        assert_eq!(a.channels_per_frame, 1);
+        assert_eq!(a.frames_per_packet, 320); // 20 ms @ 16 kHz
         assert_eq!(a.bytes_per_packet, 0); // variable per mode
     }
 
