@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.2...v0.0.3) - 2026-05-30
+
+### Other
+
+- round 7: AMR-NB narrow-band speech decode via AudioConverter
+- round 6: iLBC narrow-band speech decode + encode via AudioConverter
+- report AT's quantised bitrate via output_params.bit_rate
+- round 5: AAC-LD + AAC-ELD encode + decode via AudioConverter
+- round 4: HE-AAC v1 + v2 encode + decode via AudioConverter
+- round 3: ALAC decode + encode via AudioConverter
+- add .gitignore + drop committed Cargo.lock
+
 ### Added
 
 - **Round 7: AMR-NB (Adaptive Multi-Rate Narrowband, 3GPP TS 26.071 /
