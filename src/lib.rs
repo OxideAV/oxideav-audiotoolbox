@@ -29,6 +29,7 @@
 //! | iLBC      | yes     | yes     | yes (8 kHz mono, 20 ms + 30 ms modes)  |
 //! | AMR-NB    | yes     | n/a     | yes (8 kHz mono, 8 speech modes + SID, decode-only) |
 //! | AMR-WB    | yes     | n/a     | yes (16 kHz mono, 9 speech modes + SID, decode-only) |
+//! | MP3       | yes     | n/a     | yes (MPEG-1/2/2.5 Audio Layer III, decode-only) |
 //!
 //! # Workspace policy
 //!
@@ -41,6 +42,7 @@ pub mod alac;
 pub mod amr;
 pub mod amr_wb;
 pub mod ilbc;
+pub mod mp3;
 pub mod sys;
 
 #[cfg(feature = "registry")]
@@ -59,6 +61,8 @@ pub mod encoder;
 pub mod ilbc_decoder;
 #[cfg(feature = "registry")]
 pub mod ilbc_encoder;
+#[cfg(feature = "registry")]
+pub mod mp3_decoder;
 
 #[cfg(feature = "registry")]
 use oxideav_core::{CodecCapabilities, CodecId, CodecInfo, CodecTag};
@@ -125,6 +129,7 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
     register_ilbc(ctx);
     register_amr_nb(ctx);
     register_amr_wb(ctx);
+    register_mp3(ctx);
 }
 
 /// Register Apple Lossless (ALAC) decoder + encoder factories.
@@ -272,6 +277,56 @@ fn register_amr_wb(ctx: &mut oxideav_core::RuntimeContext) {
     );
 }
 
+/// Register MPEG-1/2/2.5 Audio Layer I/II/III (MP1 / MP2 / MP3)
+/// **decoder** factory.
+///
+/// AudioToolbox exposes the MPEG audio layers (`kAudioFormatMPEGLayer1`
+/// / `kAudioFormatMPEGLayer2` / `kAudioFormatMPEGLayer3`,
+/// FourCC `'.mp1'` / `'.mp2'` / `'.mp3'`) as decompression targets but
+/// does not ship a paired encoder for any of them, so this
+/// registration is decode-only. The decoder factory accepts any of the
+/// three layers — it sniffs the first frame's header and configures
+/// the converter for the appropriate format ID and PCM block size
+/// (1152 for MPEG-1 Layer II/III, 576 for MPEG-2 LSF Layer III, 384
+/// for Layer I).
+///
+/// Codec id `"mp3"` is the primary registration (MP3 is by far the
+/// dominant consumer; Layer I/II content is rare outside DAB / VCD).
+/// Tags claimed:
+///
+/// * FourCC `'.mp3'` — Apple's MP3 identifier; also matches some MOV
+///   `mp4a`-aliasing sample-entry tables.
+/// * `mp4_object_type(0x6B)` — ISO/IEC 14496-1 ObjectTypeIndication
+///   for MPEG-1 / MPEG-2 audio (used by some MP4 / 3GPP files that
+///   wrap MP3 in an `mp4a` sample entry with this OTI).
+/// * Matroska `A_MPEG/L3` — Matroska's CodecID for MP3 tracks.
+/// * wFormatTag `0x0055` — Microsoft's RIFF/WAVE tag for MP3 (used
+///   by WAV containers carrying MP3 payload).
+#[cfg(feature = "registry")]
+fn register_mp3(ctx: &mut oxideav_core::RuntimeContext) {
+    let cid = CodecId::new("mp3");
+
+    let dec_caps = CodecCapabilities::audio("mp3_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(2)
+        .with_max_sample_rate(48_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid)
+            .capabilities(dec_caps)
+            .decoder(mp3_decoder::make_decoder)
+            .tags([
+                CodecTag::fourcc(b".mp3"),
+                CodecTag::mp4_object_type(0x6B),
+                CodecTag::matroska("A_MPEG/L3"),
+                CodecTag::wave_format(0x0055),
+            ]),
+    );
+}
+
 #[cfg(feature = "registry")]
 oxideav_core::register!("audiotoolbox", register);
 
@@ -344,6 +399,22 @@ mod register_tests {
         assert!(
             !ctx.codecs.has_encoder(&id),
             "AMR-NB encoder must not be registered (AT is decode-only)"
+        );
+    }
+
+    #[test]
+    fn register_installs_mp3_decoder_only() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        let id = CodecId::new("mp3");
+        assert!(
+            ctx.codecs.has_decoder(&id),
+            "MP3 decoder not registered after register()"
+        );
+        // AT exposes MP3 decode only — encoder must NOT be present.
+        assert!(
+            !ctx.codecs.has_encoder(&id),
+            "MP3 encoder must not be registered (AT is decode-only)"
         );
     }
 

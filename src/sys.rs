@@ -53,6 +53,35 @@ pub const K_AUDIO_FORMAT_ILBC: u32 = 0x696C6263; // 'ilbc'
 /// AudioStreamPacketDescription supplied by the input callback.
 pub const K_AUDIO_FORMAT_AMR: u32 = 0x73616D72; // 'samr'
 
+/// kAudioFormatMPEGLayer3 — MPEG-1/2 Audio Layer III (MP3). Apple's
+/// AudioToolbox identifier is the FourCC `'.mp3'`. AT exposes MP3 as a
+/// **decode-only** target via `AudioConverterRef`; there is no paired
+/// AT MP3 encoder (the macOS encoder side dropped MP3 long ago and was
+/// never re-added). Each MP3 frame begins with a 32-bit header (sync
+/// 0xFFE in the top 12 bits, followed by version / layer / bitrate /
+/// sample-rate / padding / channel-mode bits) and the per-frame
+/// compressed length is derived from the header. MP3 PCM block sizes
+/// are codec-defined: 1152 samples per frame for MPEG-1 Layer III and
+/// 576 samples per frame for MPEG-2 / MPEG-2.5 Layer III (the LSF
+/// variant — Low Sampling Frequency — uses a single granule per
+/// frame). AudioConverter handles the per-frame block-size selection
+/// internally; the input callback only needs to supply each frame as a
+/// single packet with a packet description carrying the byte size and
+/// `variable_frames_in_packet = 0` (compressed packets vend a fixed
+/// number of PCM frames driven by the header).
+pub const K_AUDIO_FORMAT_MPEG_LAYER_3: u32 = 0x2E6D7033; // '.mp3'
+
+/// kAudioFormatMPEGLayer2 — MPEG-1/2 Audio Layer II (MP2). FourCC
+/// `'.mp2'`. Also a **decode-only** target on AT. Layer II frames are
+/// always 1152 PCM samples (MPEG-1) or 1152 / 576 (MPEG-2 LSF) and the
+/// header layout matches Layer III except the layer bits report `10`.
+pub const K_AUDIO_FORMAT_MPEG_LAYER_2: u32 = 0x2E6D7032; // '.mp2'
+
+/// kAudioFormatMPEGLayer1 — MPEG-1/2 Audio Layer I (MP1). FourCC
+/// `'.mp1'`. Decode-only via AT. Layer I frames are always 384 PCM
+/// samples per channel.
+pub const K_AUDIO_FORMAT_MPEG_LAYER_1: u32 = 0x2E6D7031; // '.mp1'
+
 /// kAudioFormatAMR_WB — Adaptive Multi-Rate Wideband speech codec
 /// (3GPP TS 26.171 / TS 26.201 / RFC 4867). Apple's AudioToolbox
 /// identifier is the FourCC `'sawb'`. AMR-WB is fixed at 16 kHz mono
@@ -318,6 +347,67 @@ impl AudioStreamBasicDescription {
             frames_per_packet: 320, // 20 ms @ 16 kHz
             bytes_per_frame: 0,     // compressed, not meaningful
             channels_per_frame: 1,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for MPEG Layer III (MP3, compressed input).
+    ///
+    /// MP3 is variable-rate at the packet level (each frame carries its
+    /// own bitrate index in the header), so `bytes_per_packet` is `0`
+    /// and the input callback supplies the per-packet byte count via an
+    /// `AudioStreamPacketDescription`. PCM block size per packet is
+    /// codec-defined (1152 for MPEG-1 Layer III, 576 for MPEG-2 /
+    /// MPEG-2.5 Layer III) — AT picks the right block size from the
+    /// header bits inside each frame, so the `frames_per_packet` field
+    /// is left at `0` (the "tell me from the header" sentinel for
+    /// AudioConverter compressed inputs).
+    ///
+    /// `sample_rate` and `channels` must come from the first decoded
+    /// frame header. AT will refuse a converter whose declared rate
+    /// disagrees with the first frame's header.
+    pub fn mpeg_layer_3(sample_rate: f64, channels: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_MPEG_LAYER_3,
+            format_flags: 0,
+            bytes_per_packet: 0,  // variable (header-driven)
+            frames_per_packet: 0, // header-driven (1152 or 576)
+            bytes_per_frame: 0,   // compressed
+            channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for MPEG Layer II (MP2, compressed input).
+    /// Like Layer III, packet-side metadata is header-driven.
+    pub fn mpeg_layer_2(sample_rate: f64, channels: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_MPEG_LAYER_2,
+            format_flags: 0,
+            bytes_per_packet: 0,
+            frames_per_packet: 0,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for MPEG Layer I (MP1, compressed input).
+    /// Header-driven like Layer II / III.
+    pub fn mpeg_layer_1(sample_rate: f64, channels: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_MPEG_LAYER_1,
+            format_flags: 0,
+            bytes_per_packet: 0,
+            frames_per_packet: 0,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
             bits_per_channel: 0,
             reserved: 0,
         }
@@ -673,6 +763,42 @@ mod tests {
         assert_eq!(a.channels_per_frame, 1);
         assert_eq!(a.frames_per_packet, 320); // 20 ms @ 16 kHz
         assert_eq!(a.bytes_per_packet, 0); // variable per mode
+    }
+
+    #[test]
+    fn mp3_fourcc_values() {
+        // '.mp1' / '.mp2' / '.mp3' — Apple's MPEG-1/2 Audio Layer
+        // FourCCs as registered in AudioFormat.h.
+        assert_eq!(K_AUDIO_FORMAT_MPEG_LAYER_1, u32::from_be_bytes(*b".mp1"));
+        assert_eq!(K_AUDIO_FORMAT_MPEG_LAYER_2, u32::from_be_bytes(*b".mp2"));
+        assert_eq!(K_AUDIO_FORMAT_MPEG_LAYER_3, u32::from_be_bytes(*b".mp3"));
+    }
+
+    #[test]
+    fn asbd_mp3_geometry() {
+        let a = AudioStreamBasicDescription::mpeg_layer_3(44_100.0, 2);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_MPEG_LAYER_3);
+        assert_eq!(a.sample_rate, 44_100.0);
+        assert_eq!(a.channels_per_frame, 2);
+        // Both byte-count and frame-count are header-driven for MP3.
+        assert_eq!(a.bytes_per_packet, 0);
+        assert_eq!(a.frames_per_packet, 0);
+        assert_eq!(a.bytes_per_frame, 0);
+        assert_eq!(a.bits_per_channel, 0);
+    }
+
+    #[test]
+    fn asbd_mp2_geometry() {
+        let a = AudioStreamBasicDescription::mpeg_layer_2(48_000.0, 2);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_MPEG_LAYER_2);
+        assert_eq!(a.frames_per_packet, 0);
+    }
+
+    #[test]
+    fn asbd_mp1_geometry() {
+        let a = AudioStreamBasicDescription::mpeg_layer_1(48_000.0, 2);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_MPEG_LAYER_1);
+        assert_eq!(a.frames_per_packet, 0);
     }
 
     #[test]

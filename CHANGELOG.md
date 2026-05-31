@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Round 9: MP3 (MPEG-1/2/2.5 Audio Layer III, ISO/IEC 11172-3 /
+  ISO/IEC 13818-3) decode** via `AudioConverterRef`. AudioToolbox
+  exposes `kAudioFormatMPEGLayer3` (`'.mp3'`) as a **decode-only**
+  target — there is no paired AT encoder for any MPEG audio layer, so
+  the registry installs only a decoder factory under codec id `"mp3"`
+  with `implementation = "mp3_audiotoolbox"`, `priority = 10`,
+  `hardware_accelerated = true`, `lossy = true`. Tags claimed:
+  `fourcc(b".mp3")` (MOV `.mp3` sample entries), `mp4_object_type(0x6B)`
+  (MPEG-1/2 Audio OTI in `mp4a` sample entries), `matroska(A_MPEG/L3)`,
+  and `wave_format(0x0055)` (Microsoft's RIFF/WAVE tag for MP3-in-WAV).
+- New `src/mp3.rs` module exposing the `FrameHeader` parser (32-bit
+  MPEG audio header — sync + version + layer + bitrate-index +
+  sample-rate-index + padding + channel-mode), `Version` /
+  `Layer` / `ChannelMode` enums, per-(version × layer) bitrate
+  lookup tables matching ISO/IEC 11172-3 §2.4.2.3 and 13818-3
+  §2.4.2.3, sample-rate-index tables for MPEG-1 (44.1/48/32 kHz),
+  MPEG-2 LSF (22.05/24/16 kHz), and MPEG-2.5 (11.025/12/8 kHz),
+  the `samples_per_frame` matrix (384 for Layer I, 1152 for MPEG-1
+  Layer II/III, 576 for MPEG-2 LSF Layer III), and `frame_length`
+  computation for all (version × layer × padding) combinations.
+- `src/mp3_decoder.rs` — `Mp3AtDecoder` implementing
+  `oxideav_core::Decoder`. Lazy first-packet configure phase
+  inspects the first frame's header and constructs the matching
+  ASBD (`mpeg_layer_1` / `mpeg_layer_2` / `mpeg_layer_3`); mid-
+  stream layer / sample-rate / channel-mode changes are rejected
+  with typed errors (AT would refuse them too, but the typed
+  diagnostic is friendlier than the raw OSStatus). Per-packet
+  validation: declared frame length from the header must match
+  the packet byte count. Persistent input-packet queue with
+  one-packet-of-slack lookahead matching the iLBC / AMR / HE-AAC
+  pattern so AT never sees "0 packets" mid-stream. `flush()`
+  drains the trailing PCM held back by the slack policy and the
+  AT decoder's internal lookahead.
+- New `K_AUDIO_FORMAT_MPEG_LAYER_3 = '.mp3'`,
+  `K_AUDIO_FORMAT_MPEG_LAYER_2 = '.mp2'`, and
+  `K_AUDIO_FORMAT_MPEG_LAYER_1 = '.mp1'` constants +
+  matching `AudioStreamBasicDescription::mpeg_layer_{1,2,3}`
+  constructors in `sys.rs`. Compressed-input ASBDs are
+  header-driven (`bytes_per_packet = 0`, `frames_per_packet = 0`).
+- Integration test `tests/mp3_decode.rs` using the staged
+  MPEG-1 Layer III 128 kbit/s 44.1 kHz stereo fixture at
+  `docs/audio/mp3/fixtures/layer3-stereo-44100-128kbps/`:
+  - `mp3_decoder_accepts_real_fixture` — feeds all 33 frames
+    through the decoder, drains PCM after each + flush, asserts
+    ≥ 90 % of the expected 33 × 1152 = 38_016 per-channel
+    sample count emerges (the actual count is bit-exact).
+  - `mp3_decoder_pcm_resembles_reference` — decodes the entire
+    fixture, parses the staged `expected.wav` (PCM S16LE), and
+    computes the best-alignment peak SNR over a 2400-sample
+    priming-offset search window. **Per-channel SNR ≥ 89 dB**
+    measured (the assertion floor is 12 dB to remain
+    forgiving of macOS-version IMDCT-rounding drift).
+  - `split_frames_walks_real_mp3` — pins the ID3v2 skip +
+    `FrameHeader::frame_length` interaction so the test fixture
+    yields the expected frame count cleanly.
+- New unit tests for `FrameHeader::parse` on every plausible
+  header shape (MPEG-1 Layer III 128k 44.1k stereo, padding,
+  MPEG-2 LSF Layer III 64k 22.05k mono, MPEG-2.5 Layer III 8k
+  8k mono, MPEG-1 Layer II 192k 48k, MPEG-1 Layer I 256k 32k),
+  rejection of every reserved field value (sync missing,
+  reserved version `01`, reserved layer `00`, free-format
+  bitrate-index `0`, reserved bitrate-index `15`, reserved
+  sample-rate-index `3`), the `samples_per_frame` matrix, the
+  `ChannelMode::channel_count` mapping, decoder construction,
+  lazy-configure pinning of `(sample_rate, channels,
+  frames_per_packet, layer)`, undersized-frame-body rejection,
+  invalid-header rejection, mid-stream layer-change rejection,
+  the `'.mp1'` / `'.mp2'` / `'.mp3'` FourCC byte mappings, the
+  MP3 / MP2 / MP1 ASBD geometries (compressed inputs, both
+  byte-count and frame-count header-driven), and registry
+  presence (decoder only — encoder must NOT be registered
+  since AT is decode-only for every MPEG audio layer).
+
 ## [0.0.3](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.2...v0.0.3) - 2026-05-30
 
 ### Other
