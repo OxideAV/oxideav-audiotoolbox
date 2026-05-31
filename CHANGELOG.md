@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Round 9: MP3 (MPEG-1 / MPEG-2 / MPEG-2.5 Audio Layer III) decode**
+  via `AudioConverterRef`. AudioToolbox exposes `kAudioFormatMPEGLayer3`
+  (`'.mp3'`) as a **decode-only** target (AT ships no MPEG-audio
+  encoder), so the registry installs only a decoder factory under
+  codec id `"mp3"` with `implementation = "mp3_audiotoolbox"`,
+  `priority = 10`, `hardware_accelerated = true`, `lossy = true`.
+  Tags claimed: `fourcc(b".mp3")` (AT / ISOBMFF), `mp4_object_type
+  (0x6B)` (ISO/IEC 14496-1 MPEG-1 Audio), `matroska(A_MPEG/L3)`, and
+  `wave_format(0x0055)` (Microsoft `WAVE_FORMAT_MPEGLAYER3`).
+- New `src/mp3.rs` module exposing the `FrameHeader` parser for all
+  MPEG audio frame headers: the `Version` enum (MPEG-1 / MPEG-2 LSF
+  / MPEG-2.5 Fraunhofer extension), `Layer` enum (Layer I / II / III),
+  `ChannelMode` enum (stereo / joint-stereo / dual-mono / mono),
+  per-(version × layer) bitrate tables per ISO/IEC 11172-3 §2.4.2.3 +
+  ISO/IEC 13818-3 §2.4.2.3, per-version sample-rate tables (MPEG-2.5
+  rates 8 / 11.025 / 12 kHz from `docs/audio/mp3/MPEG-2.5-GAP.md`'s
+  three primary clean sources — EBU TR 283 Popp/Brandenburg + USPTO
+  RE44,897 + datavoyage header reference), and on-wire frame-length
+  computation per ISO 11172-3 §2.4.3.1.
+- `src/mp3_decoder.rs` — `Mp3AtDecoder` implementing
+  `oxideav_core::Decoder`. Lazily constructs the AudioConverter from
+  the first frame header (caller-supplied `CodecParameters` are
+  advisory) so the bridge picks up the actual stream geometry rather
+  than container-metadata reflections. Subsequent frames must match
+  the latched (version × layer × sample-rate × channel-mode); bitrate
+  changes are accepted (VBR is in scope). Mid-stream layer / version
+  / sample-rate / channel-mode switches surface typed
+  `Error::unsupported`. Persistent input-queue + one-packet-of-slack
+  lookahead so AT never sees "0 packets" mid-stream (same shape as
+  iLBC / AMR-NB / AMR-WB).
+- `tests/mp3_decode.rs` — integration smoke against the bundled
+  `tests/fixtures/mp3-layer3-stereo-44100-128kbps/` corpus (33 ×
+  1152-sample MPEG-1 LIII 128 kbit/s stereo frames). Decodes to
+  **76 032 interleaved i16 samples** and matches the staged
+  reference WAV at **≈ 89.8 dB SNR** after priming alignment.
+  Fixture is copied into `tests/fixtures/` so the standalone-repo
+  GitHub Actions CI sees it without the umbrella's `docs/` submodule.
+- `src/sys.rs` constants `K_AUDIO_FORMAT_MPEG_LAYER_{1,2,3}` (the
+  `'.mp1'` / `'.mp2'` / `'.mp3'` FourCCs) and matching
+  `AudioStreamBasicDescription::mpeg_layer{1,2,3}` constructors. Only
+  Layer III is wired through the registry; the Layer I + II
+  constructors are included for sys-level completeness.
+
 ## [0.0.3](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.2...v0.0.3) - 2026-05-30
 
 ### Other
