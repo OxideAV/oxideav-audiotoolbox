@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.3...v0.0.4) - 2026-05-31
+
+### Other
+
+- mp3 test: bundle fixture inside tests/fixtures/ for standalone-repo CI
+- round 9: MP3 (MPEG-1/2/2.5 Audio Layer III) decode via AudioConverter
+
 ### Added
 
 - **Round 9: MP3 (MPEG-1/2/2.5 Audio Layer III, ISO/IEC 11172-3 /
