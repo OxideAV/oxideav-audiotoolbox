@@ -1,8 +1,8 @@
 //! Integration test for the AudioToolbox MP3 decoder bridge.
 //!
-//! Strategy: feed the staged MPEG-1 Layer III 128 kbit/s 44.1 kHz
-//! stereo fixture (in `docs/audio/mp3/fixtures/`) through the AT
-//! decoder one frame at a time and verify that:
+//! Strategy: feed the bundled MPEG-1 Layer III 128 kbit/s 44.1 kHz
+//! stereo fixture (in `tests/fixtures/`) through the AT decoder one
+//! frame at a time and verify that:
 //!
 //! 1. The decoder accepts every well-formed frame in the fixture
 //!    without surfacing an error from `AudioConverterFillComplexBuffer`.
@@ -34,10 +34,10 @@ use oxideav_audiotoolbox::mp3::FrameHeader;
 use oxideav_audiotoolbox::mp3_decoder;
 use oxideav_core::{CodecId, CodecParameters, Frame, Packet, TimeBase};
 
-const FIXTURE_MP3: &[u8] =
-    include_bytes!("../../../docs/audio/mp3/fixtures/layer3-stereo-44100-128kbps/input.mp3");
-const FIXTURE_WAV: &[u8] =
-    include_bytes!("../../../docs/audio/mp3/fixtures/layer3-stereo-44100-128kbps/expected.wav");
+// Bundled inside the crate so the standalone OxideAV/oxideav-audiotoolbox
+// CI checkout has the fixture without depending on a sibling docs/ tree.
+const FIXTURE_MP3: &[u8] = include_bytes!("fixtures/mp3-layer3-stereo-44100-128kbps.mp3");
+const FIXTURE_WAV: &[u8] = include_bytes!("fixtures/mp3-layer3-stereo-44100-128kbps.wav");
 
 /// Skip an ID3v2 prefix if present and return the remaining bytes.
 ///
