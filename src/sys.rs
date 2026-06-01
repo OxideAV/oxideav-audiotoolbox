@@ -82,6 +82,20 @@ pub const K_AUDIO_FORMAT_MPEG_LAYER_3: u32 = 0x2E6D7033; // '.mp3'
 /// AudioStreamPacketDescription supplied by the input callback.
 pub const K_AUDIO_FORMAT_AMR_WB: u32 = 0x73617762; // 'sawb'
 
+/// kAudioFormatFLAC — Free Lossless Audio Codec (RFC 9639). Apple's
+/// AudioToolbox identifier is the FourCC `'flac'`. Per the public
+/// `CoreAudioBaseTypes.h` header comment, "the flags indicate the bit
+/// depth of the source material" — the same numbering scheme as
+/// ALAC's source-data flags (1 → 16-bit, 2 → 20-bit, 3 → 24-bit,
+/// 4 → 32-bit), so we reuse the `K_AF_APPLE_LOSSLESS_*` constants for
+/// the FLAC ASBD's `format_flags` slot. The compressed packet is a
+/// single FLAC frame (one header + N subframes + footer CRC-16 per
+/// RFC 9639 §9); block size varies frame-to-frame for variable-blocksize
+/// streams and stays fixed for fixed-blocksize streams. AT exposes
+/// FLAC as a decompression target on macOS 13+ (and as an encoder
+/// target on the same systems — symmetric with ALAC).
+pub const K_AUDIO_FORMAT_FLAC: u32 = 0x666C6163; // 'flac'
+
 /// kAudioFormatFlagIsFloat
 pub const K_AF_FLAG_IS_FLOAT: u32 = 1 << 0;
 /// kAudioFormatFlagIsPacked  (samples fill every bit of the word)
@@ -428,6 +442,48 @@ impl AudioStreamBasicDescription {
             bytes_per_frame: 0,
             channels_per_frame: channels,
             bits_per_channel: 0, // ALAC sets this to 0 in the compressed ASBD
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for FLAC (compressed).
+    ///
+    /// `bit_depth_flag` follows the same Apple convention as ALAC: it
+    /// is one of the `K_AF_APPLE_LOSSLESS_*` values declaring the bit
+    /// depth of the source PCM material (1 → 16-bit, 2 → 20-bit, 3 →
+    /// 24-bit, 4 → 32-bit). Per the `CoreAudioBaseTypes.h` enum
+    /// comment, the FLAC format's `mFormatFlags` field carries
+    /// exactly that source-data declaration.
+    ///
+    /// `frames_per_packet` is the FLAC block size — i.e. the number
+    /// of PCM samples per channel produced by decoding one frame.
+    /// Canonical default values seen in the fixture corpus under
+    /// `docs/audio/flac/fixtures/` are 4096 and 4608 (each producer
+    /// picks one); both are RFC 9639 §9.1.2 Table 1 entries (codes
+    /// 11 and 5 respectively). For variable-blocksize streams the
+    /// value supplied here is the *upper bound* (typically
+    /// `STREAMINFO.max_blocksize`) and the per-packet description
+    /// supplied through the input callback carries the actual per-
+    /// frame count.
+    ///
+    /// `bytes_per_packet = 0` because compressed frame bytes vary;
+    /// `bits_per_channel = 0` because the source-data declaration
+    /// already covers bit depth.
+    pub fn flac(
+        sample_rate: f64,
+        channels: u32,
+        bit_depth_flag: u32,
+        frames_per_packet: u32,
+    ) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_FLAC,
+            format_flags: bit_depth_flag,
+            bytes_per_packet: 0, // variable per FLAC frame
+            frames_per_packet,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0,
             reserved: 0,
         }
     }
@@ -796,5 +852,32 @@ mod tests {
         // Spell out the FourCC byte mapping so a typo can't slip through.
         assert_eq!(K_AUDIO_FORMAT_MPEG4_AAC_LD, u32::from_be_bytes(*b"aacl"));
         assert_eq!(K_AUDIO_FORMAT_MPEG4_AAC_ELD, u32::from_be_bytes(*b"aace"));
+    }
+
+    #[test]
+    fn flac_fourcc_value() {
+        assert_eq!(K_AUDIO_FORMAT_FLAC, u32::from_be_bytes(*b"flac"));
+    }
+
+    #[test]
+    fn asbd_flac_geometry_16bit_stereo() {
+        let a = AudioStreamBasicDescription::flac(44_100.0, 2, K_AF_APPLE_LOSSLESS_16_BIT, 4096);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_FLAC);
+        assert_eq!(a.sample_rate, 44_100.0);
+        assert_eq!(a.channels_per_frame, 2);
+        assert_eq!(a.frames_per_packet, 4096);
+        assert_eq!(a.bytes_per_packet, 0); // compressed, variable per FLAC frame
+        assert_eq!(a.format_flags, K_AF_APPLE_LOSSLESS_16_BIT);
+        assert_eq!(a.bits_per_channel, 0);
+    }
+
+    #[test]
+    fn asbd_flac_geometry_24bit_mono() {
+        // 24-bit FLAC should use the 24-bit source-data flag value (= 3).
+        let a = AudioStreamBasicDescription::flac(96_000.0, 1, K_AF_APPLE_LOSSLESS_24_BIT, 4608);
+        assert_eq!(a.sample_rate, 96_000.0);
+        assert_eq!(a.channels_per_frame, 1);
+        assert_eq!(a.frames_per_packet, 4608); // RFC 9639 §9.1.2 Table 1 code 5
+        assert_eq!(a.format_flags, K_AF_APPLE_LOSSLESS_24_BIT);
     }
 }

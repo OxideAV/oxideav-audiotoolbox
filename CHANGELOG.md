@@ -9,6 +9,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 10: FLAC (Free Lossless Audio Codec, RFC 9639) decode** via
+  `AudioConverterRef`. AudioToolbox exposes `kAudioFormatFLAC`
+  (`'flac'`) on macOS 13+ as both a decompression and a compression
+  target; this round installs the decode side. Tags claimed:
+  `fourcc(b"flac")` (AT / ISOBMFF) and `matroska(A_FLAC)`.
+  Implementation `flac_audiotoolbox`, `priority = 10`,
+  `hardware_accelerated = true`, `lossy = false`, max 8 channels,
+  max 192 kHz.
+- New `src/flac.rs` module covering:
+  - `StreamInfo` — 34-byte STREAMINFO body parser per RFC 9639 §8.1
+    (16 + 16 + 24 + 24 + 20 + 3 + 5 + 36 + 128 bits) plus the inverse
+    serialiser. Validates `sample_rate != 0` and
+    `bits_per_sample >= 4`.
+  - `FrameHeader` + `parse_frame_header` — RFC 9639 §9.1 walker
+    covering the 15-bit `0b111111111111100` sync code, 1-bit
+    blocking strategy, 4-bit block-size code (RFC 9639 §9.1.2 Table 1),
+    4-bit sample-rate code (Table 2), 4-bit channel-assignment code
+    (§9.1.3) and 3-bit bits-per-sample code (§9.1.4) with
+    STREAMINFO fallback for code `0`.
+  - `ChannelAssignment` enum — `Independent(n)`, `LeftSide`,
+    `SideRight`, `MidSide` per §9.1.3. Reserved codes 11..=15
+    surface as `None` from `from_code`.
+  - `bit_depth_flag` — maps a FLAC bit depth (4..=32) to the
+    `K_AF_APPLE_LOSSLESS_*` source-data flag value (same convention
+    AT uses for FLAC per the `CoreAudioBaseTypes.h` header comment).
+  - `build_magic_cookie` + `parse_magic_cookie` — produce / consume
+    the **Xiph "FLAC in ISOBMFF" `dfLa` box** required by AT. The
+    cookie layout was discovered empirically: bare STREAMINFO body,
+    `fLaC + STREAMINFO`, and full `.flac` file prefixes all return
+    `'!dat'` / `'!siz'` from
+    `AudioConverterSetProperty(kAudioConverterDecompressionMagicCookie,
+    …)`; only the `dfLa`-boxed form validates. The box layout is
+    8-byte BoxHeader (`size`, `'dfLa'`) + 4-byte FullBox header
+    (version=0, flags=0) + metadata block chain (≥ 1 STREAMINFO).
+    Maximum cookie size AT accepts is **256 bytes**
+    (`MAGIC_COOKIE_MAX_LEN`).
+- `src/flac_decoder.rs` — `FlacAtDecoder` implementing
+  `oxideav_core::Decoder`. Resolves the magic cookie via a three-path
+  fallback: (1) full `dfLa` box in `CodecParameters::extradata`, (2)
+  bare 34-byte STREAMINFO body in `extradata` → wrap in `dfLa`, (3)
+  synthesise from `sample_rate / channels / sample_format`. Validates
+  every incoming packet against the latched STREAMINFO (sample-rate /
+  channel-count / bit-depth switches mid-stream return typed
+  `Error::unsupported`; block-size changes are allowed since
+  variable-blocksize FLAC streams are in scope per RFC 9639 §9.1.1).
+  Persistent input-queue + one-packet-of-slack lookahead matching
+  the iLBC / AMR-NB / AMR-WB / MP3 pattern so AT never sees
+  "0 packets" mid-stream. `flush()` drains AT's internal lookahead;
+  `reset()` clears the queue + calls `AudioConverterReset`.
+- New `K_AUDIO_FORMAT_FLAC = 'flac'` constant + matching
+  `AudioStreamBasicDescription::flac()` constructor in `sys.rs`
+  (compressed source: `bytes_per_packet = 0` for variable-rate
+  input, `format_flags = K_AF_APPLE_LOSSLESS_*` for source bit
+  depth, `frames_per_packet` carries the max blocksize from
+  STREAMINFO).
+- Integration test `tests/flac_decode.rs` against the bundled
+  `tests/fixtures/flac-mono-16bit-44100/` corpus (one 1-second
+  mono / 16-bit / 44.1 kHz FLAC stream, 10 × 4608-sample
+  fixed-blocksize frames with the last frame trimmed to fit the
+  44 100-sample total):
+  - `flac_decoder_decodes_mono_44100_fixture_lossless` — feeds the
+    10 sync-split frames through the bridge, asserts the decoded
+    stream is **exactly 44 100 i16 samples** (matching
+    `STREAMINFO.total_samples`) and **byte-exact** to
+    `expected.wav`. FLAC is lossless, so anything else means the
+    bridge lost or distorted samples.
+  - `flac_decoder_resets_state` — verifies `reset()` re-arms the
+    decoder for new packets after previous-run state.
+  - `flac_decoder_rejects_short_packet` — pins the bridge's
+    surface-area check for packets too short to carry a header.
+  - `flac_decoder_uses_extradata_cookie_verbatim` — confirms
+    a caller-supplied cookie round-trips through
+    `parse_magic_cookie` and is accepted by AT.
+- New unit tests for `StreamInfo` roundtrip (44.1 kHz stereo 16-bit
+  and 96 kHz mono 24-bit) + invariants (zero-sample-rate rejection,
+  short-buffer rejection, fixed-vs-variable blocksize predicate),
+  fixture STREAMINFO body parse (extracted from
+  `docs/audio/flac/fixtures/stereo-16bit-44100-fixed/input.flac`),
+  magic-cookie roundtrip + multi-block parse + wrong-box-type
+  rejection + size-ceiling pin (≤ 256 bytes), `bit_depth_flag`
+  canonical map, sample-rate / block-size / channel-assignment
+  table lookups, frame-header parse (fixed + variable blocksize +
+  STREAMINFO fallback for code `0`) + bad-sync rejection +
+  reserved-channel-assignment rejection. Decoder construction
+  succeeds in three scenarios (no cookie / full cookie / bare
+  STREAMINFO body in extradata); mid-stream channel-count /
+  bit-depth switches return typed errors; the FLAC ASBD geometry
+  matches expected `(format_id, format_flags, channels_per_frame,
+  frames_per_packet)` for both 16-bit stereo and 24-bit mono cases;
+  the FourCC byte mapping `K_AUDIO_FORMAT_FLAC == 'flac'` is pinned.
+
 - **Round 9: MP3 (MPEG-1 / MPEG-2 / MPEG-2.5 Audio Layer III) decode**
   via `AudioConverterRef`. AudioToolbox exposes `kAudioFormatMPEGLayer3`
   (`'.mp3'`) as a **decode-only** target (AT ships no MPEG-audio
