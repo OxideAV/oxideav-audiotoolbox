@@ -31,6 +31,7 @@
 //! | AMR-WB    | yes     | n/a     | yes (16 kHz mono, 9 speech modes + SID, decode-only) |
 //! | MP3       | yes     | n/a     | yes (Layer III, MPEG-1/2/2.5, decode-only) |
 //! | FLAC      | yes     | yes     | yes (RFC 9639, 4..=32-bit, up to 192 kHz, lossless dfLa cookie) |
+//! | Opus      | yes     | yes     | yes (RFC 6716 / RFC 7845, 1–2 ch family-0, output 8/12/16/24/48 kHz, frame 2.5..60 ms) |
 //!
 //! # Workspace policy
 //!
@@ -45,6 +46,7 @@ pub mod amr_wb;
 pub mod flac;
 pub mod ilbc;
 pub mod mp3;
+pub mod opus;
 pub mod sys;
 
 #[cfg(feature = "registry")]
@@ -69,6 +71,10 @@ pub mod ilbc_decoder;
 pub mod ilbc_encoder;
 #[cfg(feature = "registry")]
 pub mod mp3_decoder;
+#[cfg(feature = "registry")]
+pub mod opus_decoder;
+#[cfg(feature = "registry")]
+pub mod opus_encoder;
 
 #[cfg(feature = "registry")]
 use oxideav_core::{CodecCapabilities, CodecId, CodecInfo, CodecTag};
@@ -137,6 +143,7 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
     register_amr_wb(ctx);
     register_mp3(ctx);
     register_flac(ctx);
+    register_opus(ctx);
 }
 
 /// Register Apple Lossless (ALAC) decoder + encoder factories.
@@ -392,6 +399,59 @@ fn register_flac(ctx: &mut oxideav_core::RuntimeContext) {
     );
 }
 
+/// Register Opus (IETF RFC 6716 / RFC 7845 / RFC 8251) **decoder +
+/// encoder** factories.
+///
+/// AudioToolbox exposes `kAudioFormatOpus` (`'opus'`) as both a
+/// decompression and a compression target on the macOS releases that
+/// ship the Opus codec slot. The bridge registers a 1-or-2-channel
+/// mapping family 0 (RTP layout, RFC 7845 §5.1.1.1) decoder + encoder
+/// pair; multi-channel mapping families (1, 255) require container-
+/// layer mapping that is the muxer's responsibility.
+///
+/// Tags claimed:
+///
+/// * FourCC `'Opus'` — the four-character code used by ISO/IEC 14496-
+///   12 sample-entry tables for Opus tracks in MP4 containers.
+/// * Matroska `A_OPUS` — Matroska's CodecID for Opus audio.
+///
+/// Capabilities: 1–2 channels, output sample rates 8 / 12 / 16 / 24 /
+/// 48 kHz per RFC 6716 §2.1.1 (the bridge defaults to 48 kHz —
+/// the RFC 7845 §5.1 recommended player rate).
+#[cfg(feature = "registry")]
+fn register_opus(ctx: &mut oxideav_core::RuntimeContext) {
+    let cid = CodecId::new("opus");
+
+    let dec_caps = CodecCapabilities::audio("opus_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(2)
+        .with_max_sample_rate(48_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid.clone())
+            .capabilities(dec_caps)
+            .decoder(opus_decoder::make_decoder)
+            .tags([CodecTag::fourcc(b"Opus"), CodecTag::matroska("A_OPUS")]),
+    );
+
+    let enc_caps = CodecCapabilities::audio("opus_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(2)
+        .with_max_sample_rate(48_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid)
+            .capabilities(enc_caps)
+            .encoder(opus_encoder::make_encoder),
+    );
+}
+
 #[cfg(feature = "registry")]
 oxideav_core::register!("audiotoolbox", register);
 
@@ -513,6 +573,21 @@ mod register_tests {
         assert!(
             ctx.codecs.has_encoder(&id),
             "FLAC encoder not registered after register()"
+        );
+    }
+
+    #[test]
+    fn register_installs_opus_factories() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        let id = CodecId::new("opus");
+        assert!(
+            ctx.codecs.has_decoder(&id),
+            "Opus decoder not registered after register()"
+        );
+        assert!(
+            ctx.codecs.has_encoder(&id),
+            "Opus encoder not registered after register()"
         );
     }
 }

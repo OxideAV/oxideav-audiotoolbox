@@ -96,6 +96,20 @@ pub const K_AUDIO_FORMAT_AMR_WB: u32 = 0x73617762; // 'sawb'
 /// target on the same systems — symmetric with ALAC).
 pub const K_AUDIO_FORMAT_FLAC: u32 = 0x666C6163; // 'flac'
 
+/// kAudioFormatOpus — IETF Opus (RFC 6716 + RFC 7845 + RFC 8251).
+/// Apple's AudioToolbox identifier is the FourCC `'opus'`. Per the
+/// public `CoreAudioBaseTypes.h` header comment ("Opus codec, has no
+/// flags"), `mFormatFlags` is required to be 0. RFC 6716 §2.1.1 fixes
+/// the decoder output sample rate to one of 8 / 12 / 16 / 24 / 48 kHz
+/// regardless of the per-packet internal bandwidth; RFC 7845 §5.1
+/// recommends 48 kHz for hardware playback. Frame sizes per packet
+/// per RFC 6716 Table 2 are {2.5, 5, 10, 20, 40, 60} ms which at
+/// 48 kHz map to {120, 240, 480, 960, 1920, 2880} PCM frames; the
+/// AT bridge uses 20 ms / 960 frames as its per-packet default
+/// (`fpp = sample_rate * 20 / 1000`). Stereo-or-mono channel count
+/// is encoded in the TOC byte's `s` bit (RFC 6716 §3.1).
+pub const K_AUDIO_FORMAT_OPUS: u32 = 0x6F707573; // 'opus'
+
 /// kAudioFormatFlagIsFloat
 pub const K_AF_FLAG_IS_FLOAT: u32 = 1 << 0;
 /// kAudioFormatFlagIsPacked  (samples fill every bit of the word)
@@ -504,6 +518,42 @@ impl AudioStreamBasicDescription {
             format_id: K_AUDIO_FORMAT_FLAC,
             format_flags: bit_depth_flag,
             bytes_per_packet: 0, // variable per FLAC frame
+            frames_per_packet,
+            bytes_per_frame: 0,
+            channels_per_frame: channels,
+            bits_per_channel: 0,
+            reserved: 0,
+        }
+    }
+
+    /// Construct an ASBD for Opus (compressed).
+    ///
+    /// `sample_rate` is the decoder output PCM rate. RFC 6716 §2.1.1
+    /// restricts this to one of `{8000, 12000, 16000, 24000, 48000}`
+    /// Hz; AT validates the value during `AudioConverterNew`. The
+    /// 48 kHz target is the RFC 7845 §5.1 recommended default.
+    ///
+    /// `channels` is the output channel count: 1 (mono) or 2 (stereo).
+    /// Multi-channel Opus relies on the RFC 7845 §5.1.1 mapping table
+    /// and its own stream/coupled counts that the AT bridge does not
+    /// expose; for those payloads the caller routes through the
+    /// container layer.
+    ///
+    /// `frames_per_packet` is the per-packet sample count at the
+    /// output rate. Valid values at 48 kHz are
+    /// `{120, 240, 480, 960, 1920, 2880}` for {2.5, 5, 10, 20, 40,
+    /// 60} ms frames per RFC 6716 Table 2. Encoder default is 960
+    /// (20 ms, `fpp = sample_rate * 20 / 1000`).
+    ///
+    /// `bytes_per_packet = 0` because compressed packet bytes are
+    /// variable; `mFormatFlags = 0` per the `CoreAudioBaseTypes.h`
+    /// "has no flags" declaration.
+    pub fn opus(sample_rate: f64, channels: u32, frames_per_packet: u32) -> Self {
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_OPUS,
+            format_flags: 0, // RFC 6716 / AT: no flag bits defined
+            bytes_per_packet: 0,
             frames_per_packet,
             bytes_per_frame: 0,
             channels_per_frame: channels,
@@ -931,5 +981,39 @@ mod tests {
         assert_eq!(a.channels_per_frame, 1);
         assert_eq!(a.frames_per_packet, 4608); // RFC 9639 §9.1.2 Table 1 code 5
         assert_eq!(a.format_flags, K_AF_APPLE_LOSSLESS_24_BIT);
+    }
+
+    #[test]
+    fn opus_fourcc_value() {
+        assert_eq!(K_AUDIO_FORMAT_OPUS, u32::from_be_bytes(*b"opus"));
+    }
+
+    #[test]
+    fn asbd_opus_geometry_48k_stereo_20ms() {
+        // 20 ms at 48 kHz = 960 frames per packet
+        // (`fpp = sample_rate * 20 / 1000`).
+        let a = AudioStreamBasicDescription::opus(48_000.0, 2, 960);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_OPUS);
+        assert_eq!(a.sample_rate, 48_000.0);
+        assert_eq!(a.channels_per_frame, 2);
+        assert_eq!(a.frames_per_packet, 960);
+        assert_eq!(a.bytes_per_packet, 0); // variable per packet
+        assert_eq!(a.format_flags, 0); // "has no flags" per CoreAudioBaseTypes.h
+        assert_eq!(a.bits_per_channel, 0);
+    }
+
+    #[test]
+    fn asbd_opus_geometry_48k_mono_2_5ms() {
+        // 2.5 ms at 48 kHz = 120 frames per packet (min Opus frame).
+        let a = AudioStreamBasicDescription::opus(48_000.0, 1, 120);
+        assert_eq!(a.frames_per_packet, 120);
+        assert_eq!(a.channels_per_frame, 1);
+    }
+
+    #[test]
+    fn asbd_opus_geometry_48k_60ms() {
+        // 60 ms at 48 kHz = 2880 frames per packet (max Opus frame).
+        let a = AudioStreamBasicDescription::opus(48_000.0, 2, 2880);
+        assert_eq!(a.frames_per_packet, 2880);
     }
 }

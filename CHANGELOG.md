@@ -9,6 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 224: Opus decoder + encoder via `kAudioFormatOpus`** (RFC
+  6716 + RFC 7845 + RFC 8251 / Apple `CoreAudioBaseTypes.h`
+  `kAudioFormatOpus = 'opus'`). Wires both halves of the symmetric
+  AT Opus bridge in a single round.
+  - New `src/opus.rs` — wall-isolated OpusHead parser / builder per
+    RFC 7845 §5.1 Figure 2 (8-byte `OpusHead` magic + 1-byte version
+    + 1-byte channel count + 16-bit pre-skip + 32-bit input sample
+    rate + 16-bit Q7.8 output gain + 8-bit mapping family + optional
+    mapping table). All multi-byte fields little-endian per §5.1
+    bullets 4–6. Mapping family 0 (RTP RFC 7587, mono/stereo)
+    serialises to a 19-byte cookie; families 1 and 255 include the
+    extra mapping-table tail. `frames_per_packet_48k` maps the six
+    valid RFC 6716 Table 2 frame durations
+    (2.5 / 5 / 10 / 20 / 40 / 60 ms) to PCM-frame counts
+    (120 / 240 / 480 / 960 / 1920 / 2880) via
+    `fpp = sample_rate * duration_ms / 1000`.
+  - New `src/opus_decoder.rs` (`OpusAtDecoder`) implementing
+    `oxideav_core::Decoder`. Input: one raw Opus packet per
+    `Packet` (RFC 6716 §3.1 TOC byte + per-code framing); output:
+    interleaved S16 PCM at the configured output rate (8 / 12 / 16
+    / 24 / 48 kHz per RFC 6716 §2.1.1). Magic cookie resolved from
+    `CodecParameters::extradata` when present (must parse as a
+    valid OpusHead) or synthesised from explicit `(sample_rate,
+    channels)` for standalone-test paths.
+  - **Empirical AT-side discovery (r224 probe)**: AT's Opus
+    decoder slot **locks the converter at end-of-stream the moment
+    the input callback returns `0 packets`** — a single empty-
+    queue callback is enough to enter the lockout state, after
+    which subsequent FCB calls produce 0 PCM frames regardless of
+    further input. The fix is a strict "drain only while the queue
+    holds at least 2 packets" discipline plus bounding the per-call
+    PCM output to one packet's worth of frames
+    (`io_number_data_packets = sample_rate * 20 / 1000`) so AT
+    consumes one Opus packet per FCB and the slack invariant
+    holds.
+  - New `src/opus_encoder.rs` (`OpusAtEncoder`) implementing
+    `oxideav_core::Encoder`. Input: interleaved S16 or F32 PCM at
+    one of the five valid Opus rates; output: one raw Opus packet
+    per encoded block. Bit-rate plumbed through
+    `kAudioConverterEncodeBitRate` (default 96 000 bit/s; AT
+    quantises to its own grid and the actual value is read back
+    into `output_params.bit_rate`). Frame duration configurable via
+    `options.insert("frame_duration_ms", "<one of
+    2.5/5/10/20/40/60>")`; default per-packet duration: 20 ms
+    (`fpp = sample_rate * 20 / 1000`). Persistent `Box<PcmContext>`
+    PCM feeder with the one-packet-of-slack discipline (same shape
+    as the FLAC encoder's). The encoder publishes an RFC 7845 §5.1
+    OpusHead through `output_params.extradata` for downstream Ogg
+    / MP4 / WebM muxer use; AT's own compression-magic-cookie
+    property returns an opaque AT-internal blob whose layout is
+    not documented in `CoreAudioBaseTypes.h`, so the bridge does
+    not forward it to consumers.
+  - New `tests/opus_roundtrip.rs`: 2-second 1 kHz sine at 48 kHz
+    stereo → encode → 100 raw Opus packets at ≈ 96 kbit/s →
+    decode → ≈ 191 760 / 192 000 PCM samples recovered, peak SNR
+    ≈ 26.1 dB per channel after pre-skip alignment search. Opus
+    is a perceptual codec (RFC 6716 §1), so a pure sine is
+    intentionally adversarial; the SNR floor is set deliberately
+    low at 6 dB — the goal is wired-pipeline verification, not a
+    transparency measurement. Mono companion case exercises the
+    1-channel mapping-family-0 path.
+  - `src/lib.rs::register()` now installs `register_opus(ctx)` —
+    factories registered under `CodecId::new("opus")` with
+    `priority = 10`, `hardware_accelerated = true`, `lossy = true`,
+    max 2 channels, max 48 kHz, claiming tags `FourCC('Opus')`
+    (ISO/IEC 14496-12 Opus sample-entry FourCC) and Matroska
+    `A_OPUS`.
+
 - **Round 218: FLAC encoder.** Completes the symmetric AudioToolbox
   FLAC bridge — round 10 shipped decode via `kAudioFormatFLAC`
   (`'flac'`), round 218 adds the encoder side. Implementation
