@@ -262,7 +262,7 @@ pub struct OpusHead {
     pub input_sample_rate: u32,
     /// Q7.8 output gain in dB (signed; 0 means no adjustment).
     pub output_gain: i16,
-    /// 0 = RTP / mono+stereo only; 1 = Vorbis-style 1..=8 channels;
+    /// 0 = RTP (mono+stereo only); 1 = ordered 1..=8 channels;
     /// 255 = ambisonic / pass-through. Non-zero families add a trailing
     /// channel-mapping table per RFC 7845 §5.1.1 — preserved in
     /// `mapping_table` below.

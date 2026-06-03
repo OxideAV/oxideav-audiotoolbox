@@ -21,9 +21,9 @@
 //! every value in `{0, 120, 240, 480, 960, 1920, 2880, 5760}`.
 //!
 //! The default frame size is 20 ms (= 960 PCM frames at 48 kHz) —
-//! libopus's default, matching every fixture in
-//! `docs/audio/opus/fixtures/` and the canonical RTP packetisation
-//! (RFC 7587 §4.5).
+//! every fixture under `docs/audio/opus/fixtures/` ships at this
+//! cadence and RFC 7587 §4.5 specifies it as the canonical RTP
+//! packetisation.
 //!
 //! ## Output magic cookie
 //!
@@ -74,11 +74,12 @@ use crate::sys::{
     K_AUDIO_CONVERTER_ENCODE_BIT_RATE, K_AUDIO_CONVERTER_MAX_OUTPUT_PACKET_SIZE, NO_ERR,
 };
 
-/// Default per-packet duration: 20 ms. Matches libopus's default and
-/// the canonical RTP packetisation. The PCM-frame count is computed as
-/// `sample_rate / 1000 * 20` and ranges from 160 (at 8 kHz) to 960
-/// (at 48 kHz). AT's converter requires that `frames_per_packet`
-/// scale with the configured rate.
+/// Default per-packet duration: 20 ms — the canonical RTP
+/// packetisation per RFC 7587 §4.5 and the duration every fixture
+/// under `docs/audio/opus/fixtures/` ships at. The PCM-frame count is
+/// computed as `sample_rate / 1000 * 20` and ranges from 160 (at
+/// 8 kHz) to 960 (at 48 kHz). AT's converter requires that
+/// `frames_per_packet` scale with the configured rate.
 pub const DEFAULT_FRAME_DURATION_MS: u32 = 20;
 
 /// Canonical `frames_per_packet` for the configured rate at 20 ms.
@@ -154,8 +155,8 @@ impl OpusAtEncoder {
         }
         // S16 only. RFC 6716 doesn't restrict the input width, but AT's
         // Opus encoder slot specifically accepts S16 packed; the
-        // simpler invariant matches every other AT bridge with no
-        // visible quality loss for the lossy CELT/SILK path.
+        // simpler invariant carries no visible quality loss for the
+        // lossy CELT/SILK path.
         match params.sample_format.unwrap_or(SampleFormat::S16) {
             SampleFormat::S16 => {}
             other => {

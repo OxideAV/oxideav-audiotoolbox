@@ -56,9 +56,9 @@ use crate::sys::{
     AudioStreamPacketDescription, K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE, NO_ERR,
 };
 
-/// Default per-packet duration: 20 ms. Matches what every Ogg-Opus
-/// fixture under `docs/audio/opus/fixtures/` ships at and what AT's
-/// own encoder side defaults to. The PCM-frame count is computed as
+/// Default per-packet duration: 20 ms — every Ogg-Opus fixture under
+/// `docs/audio/opus/fixtures/` ships at this cadence and AT's own
+/// encoder side defaults to it. The PCM-frame count is computed as
 /// `sample_rate / 1000 * 20` and ranges from 160 (at 8 kHz) to 960
 /// (at 48 kHz). AT's converter requires that `frames_per_packet`
 /// scale with the configured rate — a 960-frame `frames_per_packet`
