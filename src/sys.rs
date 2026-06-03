@@ -180,6 +180,30 @@ impl AudioStreamBasicDescription {
         }
     }
 
+    /// Construct an ASBD for 32-bit signed integer interleaved PCM (native
+    /// endian — little-endian on every Apple platform we ship to).
+    ///
+    /// Used as the **decompression output** ASBD when the caller
+    /// asks for full-width lossless recovery from a 24- or 32-bit
+    /// source (e.g. an ALAC track whose magic-cookie `bit_depth` is
+    /// 24 or 32). The symmetric `pcm_s16` would silently truncate
+    /// the lower bits, defeating the codec's lossless contract; the
+    /// S32 path forwards the full sample word.
+    pub fn pcm_s32(sample_rate: f64, channels: u32) -> Self {
+        let bps = 4u32;
+        Self {
+            sample_rate,
+            format_id: K_AUDIO_FORMAT_LINEAR_PCM,
+            format_flags: K_AF_FLAG_IS_SIGNED_INTEGER | K_AF_FLAG_IS_PACKED,
+            bytes_per_packet: bps * channels,
+            frames_per_packet: 1,
+            bytes_per_frame: bps * channels,
+            channels_per_frame: channels,
+            bits_per_channel: 32,
+            reserved: 0,
+        }
+    }
+
     /// Construct an ASBD for MPEG-4 AAC (compressed; no layout enforced).
     pub fn mpeg4_aac(sample_rate: f64, channels: u32) -> Self {
         Self {
@@ -743,6 +767,34 @@ mod tests {
         assert_eq!(a.bits_per_channel, 32);
         assert_eq!(a.bytes_per_frame, 8); // 2 channels × 4 bytes
         assert_eq!(a.frames_per_packet, 1);
+    }
+
+    #[test]
+    fn asbd_pcm_s32_geometry() {
+        let a = AudioStreamBasicDescription::pcm_s32(48_000.0, 2);
+        assert_eq!(a.format_id, K_AUDIO_FORMAT_LINEAR_PCM);
+        assert_eq!(
+            a.format_flags,
+            K_AF_FLAG_IS_SIGNED_INTEGER | K_AF_FLAG_IS_PACKED
+        );
+        assert_eq!(a.bits_per_channel, 32);
+        assert_eq!(a.bytes_per_frame, 8); // 2 channels × 4 bytes
+        assert_eq!(a.bytes_per_packet, 8);
+        assert_eq!(a.frames_per_packet, 1);
+        assert_eq!(a.channels_per_frame, 2);
+    }
+
+    #[test]
+    fn asbd_pcm_s32_distinct_from_float32() {
+        // S32 must be flagged signed-integer, not float — otherwise
+        // AudioConverter will reinterpret the sample bits as IEEE-754
+        // floats and the resulting "lossless" recovery is garbage.
+        let s = AudioStreamBasicDescription::pcm_s32(48_000.0, 1);
+        let f = AudioStreamBasicDescription::pcm_float32(48_000.0, 1);
+        assert!(s.format_flags & K_AF_FLAG_IS_SIGNED_INTEGER != 0);
+        assert!(f.format_flags & K_AF_FLAG_IS_FLOAT != 0);
+        assert!(s.format_flags & K_AF_FLAG_IS_FLOAT == 0);
+        assert!(f.format_flags & K_AF_FLAG_IS_SIGNED_INTEGER == 0);
     }
 
     #[test]

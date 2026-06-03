@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 212: ALAC decoder S32 output path.** Before this round
+  `AlacAtDecoder` always wired its output ASBD to `pcm_s16`, so
+  24-bit and 32-bit ALAC tracks silently lost their low-order
+  bits — defeating the codec's lossless contract on its native
+  bit depths. The decoder now picks between S16 and S32 from the
+  caller-supplied `CodecParameters::sample_format`:
+  - `None` (default) and `Some(SampleFormat::S16)` keep the
+    legacy S16 output path — every existing caller is byte-
+    identical.
+  - `Some(SampleFormat::S32)` routes through a new `pcm_s32` ASBD
+    constructor (`AudioStreamBasicDescription::pcm_s32`, signed-
+    integer + packed, distinct from `pcm_float32`) so the full
+    32-bit sample word survives across decode. Against a 16- or
+    20-bit cookie the request is harmless: AudioConverter sign-
+    extends the source word into the high bytes.
+  - `AlacAtDecoder::output_sample_format()` introspector lets
+    downstream consumers learn which width they will see.
+  - New `tests/alac_s32_roundtrip.rs` exercises the full encode →
+    decode loop at S32 with a 440 Hz sine plus a deterministic
+    24-bit low-bit noise term that sits entirely below the S16
+    quantisation floor — a regression seal that fails if anyone
+    reverts to `pcm_s16`-always. Result: 190,464 / 192,000 i32
+    samples bit-exact end-to-end.
+  - Unit tests `default_output_is_s16`,
+    `explicit_s32_switches_output_width`,
+    `s32_with_24bit_cookie_accepted`, `asbd_pcm_s32_geometry`,
+    `asbd_pcm_s32_distinct_from_float32`.
+
 - **Round 10: FLAC (Free Lossless Audio Codec, RFC 9639) decode** via
   `AudioConverterRef`. AudioToolbox exposes `kAudioFormatFLAC`
   (`'flac'`) on macOS 13+ as both a decompression and a compression

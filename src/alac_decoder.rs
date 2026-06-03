@@ -2,8 +2,14 @@
 //!
 //! Input:  one raw ALAC packet per `Packet` (no framing wrapper —
 //!         containers like MOV / M4A / CAF deliver packets pre-split).
-//! Output: interleaved S16 PCM in an `AudioFrame`, one per decoded ALAC
-//!         packet (typically 4096 samples).
+//! Output: interleaved PCM in an `AudioFrame`, one per decoded ALAC
+//!         packet (typically 4096 samples). Sample width is chosen
+//!         per-call: explicit `CodecParameters::sample_format = S32`
+//!         routes through `pcm_s32` so the full 24/32-bit lossless
+//!         word survives; otherwise the decoder defaults to S16 for
+//!         backwards compatibility with callers that pre-date the
+//!         S32 path. Asking for S32 against a 16/20-bit cookie is
+//!         accepted (AT sign-extends into the high bytes).
 //!
 //! Configuration is driven by the **magic cookie** carried in
 //! `CodecParameters::extradata`. If the consumer didn't supply one
@@ -46,6 +52,15 @@ pub struct AlacAtDecoder {
     cookie: Vec<u8>,
     cfg: AlacSpecificConfig,
     converter: AudioConverterRef,
+    /// `S16` or `S32` — width of each output sample produced by the
+    /// pending `AudioFrame`. Determined at construction from
+    /// `CodecParameters::sample_format` and never changes for the
+    /// lifetime of the decoder (the converter's output ASBD is fixed).
+    output_format: SampleFormat,
+    /// Cached bytes per output frame: `bytes_per_sample(output_format) *
+    /// channels`. Used to size the PCM staging buffer and to recover
+    /// the per-packet sample count from `data_byte_size`.
+    output_bytes_per_frame: usize,
     pending: Option<Frame>,
     pts: i64,
     #[allow(dead_code)]
@@ -99,14 +114,40 @@ impl AlacAtDecoder {
             ))
         })?;
 
+        // Pick output PCM width. Default = S16 (historical behaviour,
+        // matches every existing caller). An explicit
+        // `params.sample_format = SampleFormat::S32` switches to the
+        // full-width path — necessary to round-trip a 24- or 32-bit
+        // cookie losslessly. Asking for S32 against a 16- or 20-bit
+        // cookie is harmless: AudioConverter sign-extends the source
+        // word into the high bytes (the low bits are zero / sign
+        // padding) so the bit-exact prefix invariant still holds.
+        let output_format = match params.sample_format {
+            Some(SampleFormat::S32) => SampleFormat::S32,
+            // F32 input would only have meant "decode-to-int-then-do-
+            // whatever" — keep mapping it to S16 to preserve the
+            // legacy fallback rather than silently introduce a new
+            // sample width.
+            _ => SampleFormat::S16,
+        };
+        let output_bytes_per_frame = output_format.bytes_per_sample() * cfg.num_channels as usize;
+
         let in_asbd = AudioStreamBasicDescription::apple_lossless(
             cfg.sample_rate as f64,
             cfg.num_channels as u32,
             bit_depth_flag,
             cfg.frame_length,
         );
-        let out_asbd =
-            AudioStreamBasicDescription::pcm_s16(cfg.sample_rate as f64, cfg.num_channels as u32);
+        let out_asbd = match output_format {
+            SampleFormat::S32 => AudioStreamBasicDescription::pcm_s32(
+                cfg.sample_rate as f64,
+                cfg.num_channels as u32,
+            ),
+            _ => AudioStreamBasicDescription::pcm_s16(
+                cfg.sample_rate as f64,
+                cfg.num_channels as u32,
+            ),
+        };
 
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
@@ -142,6 +183,8 @@ impl AlacAtDecoder {
             cookie,
             cfg,
             converter,
+            output_format,
+            output_bytes_per_frame,
             pending: None,
             pts: 0,
             time_base: TimeBase::new(1, cfg.sample_rate as i64),
@@ -158,8 +201,9 @@ impl AlacAtDecoder {
 
         let channels = self.channels as usize;
         let frames_per_packet = self.cfg.frame_length as usize;
-        // Output buffer is sized to one full ALAC packet of S16 samples.
-        let buf_size = frames_per_packet * channels * 2;
+        // Output buffer is sized to one full ALAC packet of
+        // `output_format` samples (S16 = 2 bytes, S32 = 4 bytes).
+        let buf_size = frames_per_packet * self.output_bytes_per_frame;
         let mut pcm_buf = vec![0u8; buf_size];
 
         let mut ctx = InputContext {
@@ -206,7 +250,7 @@ impl AlacAtDecoder {
         if actual_bytes == 0 {
             return Ok(());
         }
-        let actual_samples = actual_bytes / (channels * 2);
+        let actual_samples = actual_bytes / self.output_bytes_per_frame;
 
         let frame = AudioFrame {
             samples: actual_samples as u32,
@@ -216,6 +260,14 @@ impl AlacAtDecoder {
         self.pts += actual_samples as i64;
         self.pending = Some(Frame::Audio(frame));
         Ok(())
+    }
+
+    /// Output sample format the decoder will produce for every
+    /// `AudioFrame`. Diagnostic accessor — useful when bridging into
+    /// a pipeline whose downstream consumer needs to know whether it
+    /// will see 16-bit or 32-bit samples.
+    pub fn output_sample_format(&self) -> SampleFormat {
+        self.output_format
     }
 }
 
@@ -357,5 +409,53 @@ mod tests {
         p.extradata = vec![0u8; 10];
         let r = make_decoder(&p);
         assert!(r.is_ok(), "synthesise path should succeed: {:?}", r.err());
+    }
+
+    #[test]
+    fn default_output_is_s16() {
+        // No explicit sample_format → S16, matching every pre-S32
+        // caller's expectation (4096-frame packets = 16384 bytes
+        // stereo, not 32768).
+        let mut p = CodecParameters::audio(CodecId::new("alac"));
+        p.sample_rate = Some(48_000);
+        p.channels = Some(2);
+        let dec_box = make_decoder(&p).expect("make_decoder");
+        // Round-trip into the concrete type to introspect the
+        // chosen output format. Going through `Box<dyn Decoder>`
+        // and downcasting is not exposed; instead we re-construct
+        // `AlacAtDecoder::new` directly here.
+        let dec = AlacAtDecoder::new(&p).expect("AlacAtDecoder::new");
+        assert_eq!(dec.output_sample_format(), SampleFormat::S16);
+        // 2 channels × 2 bytes per S16 sample = 4.
+        assert_eq!(dec.output_bytes_per_frame, 4);
+        // Use the box so the factory path is also exercised.
+        drop(dec_box);
+    }
+
+    #[test]
+    fn explicit_s32_switches_output_width() {
+        // sample_format = S32 → S32 PCM output, no truncation.
+        let mut p = CodecParameters::audio(CodecId::new("alac"));
+        p.sample_rate = Some(48_000);
+        p.channels = Some(2);
+        p.sample_format = Some(SampleFormat::S32);
+        let dec = AlacAtDecoder::new(&p).expect("AlacAtDecoder::new (S32)");
+        assert_eq!(dec.output_sample_format(), SampleFormat::S32);
+        assert_eq!(dec.output_bytes_per_frame, 8); // 2 ch × 4 B
+    }
+
+    #[test]
+    fn s32_with_24bit_cookie_accepted() {
+        // S32 output against a 24-bit-depth cookie: AT sign-extends.
+        // Used by the 24-bit roundtrip path in tests/alac_s32_roundtrip.rs.
+        let cfg = AlacSpecificConfig::new(96_000, 2, 24);
+        let mut p = CodecParameters::audio(CodecId::new("alac"));
+        p.sample_rate = Some(96_000);
+        p.channels = Some(2);
+        p.sample_format = Some(SampleFormat::S32);
+        p.extradata = cfg.to_bytes().to_vec();
+        let dec = AlacAtDecoder::new(&p).expect("AlacAtDecoder::new (24-bit → S32)");
+        assert_eq!(dec.output_sample_format(), SampleFormat::S32);
+        assert_eq!(dec.cfg.bit_depth, 24);
     }
 }
