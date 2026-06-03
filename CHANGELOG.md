@@ -9,6 +9,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 224: Opus decoder + encoder.** Symmetric AudioToolbox Opus
+  bridge in one round — AT exposes `kAudioFormatOpus` (`'opus'`) as
+  both a decompression and a compression target on modern macOS, so
+  decode and encode ship together. Implementation
+  `opus_audiotoolbox`, `priority = 10`, `hardware_accelerated = true`,
+  `lossy = true`, max 8 channels, max 48 kHz.
+  - New `src/opus.rs` parses RFC 6716 §3.1 TOC byte (5-bit `config` +
+    stereo bit + 2-bit packet `code`), resolves Table 2's
+    (mode × bandwidth × frame-duration) triple, and ships RFC 7845
+    §5.1 OpusHead parser / builder for `make_decoder` extradata
+    handling.
+  - New `src/opus_decoder.rs` with `OpusAtDecoder` implementing
+    `oxideav_core::Decoder`. Input: one self-contained Opus packet
+    per `Packet`. Output: interleaved S16 PCM `AudioFrame`s at the
+    configured output rate. Accepts three extradata shapes — bare
+    OpusHead body, full OpusHead packet (with 8-byte magic), or AT's
+    28-byte compression cookie — plus no-cookie path.
+  - New `src/opus_encoder.rs` with `OpusAtEncoder` implementing
+    `oxideav_core::Encoder`. Input: interleaved S16 PCM. Output: one
+    raw Opus packet per encoded block (TOC byte + framing per
+    RFC 6716 §3). 20 ms default duration scales to the configured
+    rate as `sample_rate / 1000 * 20` PCM frames per packet.
+  - **Empirical AT-side discovery #1**: AT requires the decompression
+    cookie to be the **19-byte packet-form OpusHead** (8-byte ASCII
+    magic prefix + 11-byte body). The bare 11-byte body is rejected
+    with OSStatus `560226676` (`'!dat'`,
+    `kAudioConverterErr_InvalidInputSize` semantics). The bridge
+    always re-serialises in packet form before forwarding, so callers
+    can supply either shape.
+  - **Empirical AT-side discovery #2**: `frames_per_packet` in the
+    Opus ASBD must scale with the configured sample rate. A 960-fpp
+    (= 20 ms @ 48 kHz) ASBD at 8 kHz is rejected with
+    `kAudioConverterErr_FormatNotSupported` (`'fmt?'`). The
+    accepted upper bound is 2880 frames (60 ms @ 48 kHz); 5760
+    (120 ms) is also rejected.
+  - **Empirical AT-side discovery #3**: AT vends a **28-byte
+    compression-side cookie** from
+    `kAudioConverterCompressionMagicCookie`. Layout (all integers
+    big-endian): offsets 0..4 reserved, 4..8 = sample_rate, 8..12 =
+    frames_per_packet, 12..16 = signed pre-skip-like value (observed
+    `0xFFFFFC18`), 16..20 = channel_count, 20..28 = zeros. The
+    decoder side accepts this cookie verbatim — cross-direction
+    round-trip validated empirically.
+  - **Persistent PCM feeder**: encoder uses the same
+    `Box<PcmContext>` + one-packet-of-slack discipline introduced in
+    r218 (FLAC encoder) to avoid AT's permanent end-of-stream lock
+    when the PCM callback returns 0 bytes mid-stream.
+  - **Tags claimed**: FourCC `'Opus'` (ISOBMFF Opus sample-entry box)
+    + Matroska `A_OPUS`.
+  - New `tests/opus_roundtrip.rs` end-to-end test: 2 seconds of
+    48 kHz / 16-bit stereo PCM (440 Hz sine) → `OpusAtEncoder` @
+    64 kbit/s → 100 raw Opus packets + AT-vended 28-byte cookie →
+    `OpusAtDecoder` → **≈ 32.5 dB per-channel SNR** across 16384
+    aligned samples. Assertion threshold ≥ 5 dB confirms pipeline
+    wiring (PCM bytes survive the FFI bridge cleanly, no
+    endianness / channel-count loss).
+  - 30+ new unit tests across `opus.rs` (TOC table, OpusHead
+    round-trip, AT cookie parse), `opus_decoder.rs`
+    (cookie-shape acceptance matrix, rate / channel validation), and
+    `opus_encoder.rs` (parameter validation, cookie emission, bitrate
+    override). Wall-isolated: every parser test references only RFC
+    6716 + RFC 7845 + RFC 8251 wire-form bytes.
+  - `register_opus` in `src/lib.rs` installs both factories under
+    `CodecId("opus")`; `register_installs_opus_factories` test
+    asserts both halves register.
+
 - **Round 218: FLAC encoder.** Completes the symmetric AudioToolbox
   FLAC bridge — round 10 shipped decode via `kAudioFormatFLAC`
   (`'flac'`), round 218 adds the encoder side. Implementation
