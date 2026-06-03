@@ -30,7 +30,7 @@
 //! | AMR-NB    | yes     | n/a     | yes (8 kHz mono, 8 speech modes + SID, decode-only) |
 //! | AMR-WB    | yes     | n/a     | yes (16 kHz mono, 9 speech modes + SID, decode-only) |
 //! | MP3       | yes     | n/a     | yes (Layer III, MPEG-1/2/2.5, decode-only) |
-//! | FLAC      | yes     | n/a     | yes (RFC 9639, 4..=32-bit, up to 192 kHz, decode-only this round) |
+//! | FLAC      | yes     | yes     | yes (RFC 9639, 4..=32-bit, up to 192 kHz, lossless dfLa cookie) |
 //!
 //! # Workspace policy
 //!
@@ -61,6 +61,8 @@ pub mod decoder;
 pub mod encoder;
 #[cfg(feature = "registry")]
 pub mod flac_decoder;
+#[cfg(feature = "registry")]
+pub mod flac_encoder;
 #[cfg(feature = "registry")]
 pub mod ilbc_decoder;
 #[cfg(feature = "registry")]
@@ -330,15 +332,15 @@ fn register_mp3(ctx: &mut oxideav_core::RuntimeContext) {
     );
 }
 
-/// Register FLAC (Free Lossless Audio Codec, RFC 9639) **decoder**
-/// factory.
+/// Register FLAC (Free Lossless Audio Codec, RFC 9639) **decoder +
+/// encoder** factories.
 ///
 /// AudioToolbox exposes `kAudioFormatFLAC` (`'flac'`) as both a
-/// decompression and a compression target on macOS 13+; this
-/// registration installs the decode side. (Encoder lands in a
-/// follow-up round.)
+/// decompression and a compression target on macOS 13+. This
+/// registration installs both halves. Round 10 (decode) + round 218
+/// (encode) together complete the symmetric FLAC bridge.
 ///
-/// Tags claimed:
+/// Tags claimed (decode side carries them):
 ///
 /// * FourCC `'flac'` — AudioToolbox's identifier; matches what
 ///   ISO/IEC 14496-12 sample-entry tables use for FLAC tracks
@@ -348,11 +350,14 @@ fn register_mp3(ctx: &mut oxideav_core::RuntimeContext) {
 ///
 /// Capabilities: up to 8 channels, sample rates up to 192 kHz, bit
 /// depths 4..=32 (mapped onto the four ALAC-style source-data flag
-/// values per the public `CoreAudioBaseTypes.h` header). The bridge
-/// resolves the actual `(sample_rate / channels / bits_per_sample /
-/// max_blocksize)` configuration from the magic cookie in
-/// `CodecParameters::extradata` (or synthesises a placeholder cookie
-/// from the explicit parameters for standalone-test paths).
+/// values per the public `CoreAudioBaseTypes.h` header). The decode
+/// bridge resolves the actual `(sample_rate / channels /
+/// bits_per_sample / max_blocksize)` configuration from the magic
+/// cookie in `CodecParameters::extradata` (or synthesises a placeholder
+/// cookie from the explicit parameters for standalone-test paths).
+/// The encode bridge accepts S16 / S32 PCM and vends the resulting
+/// `dfLa` magic cookie via `output_params.extradata` for downstream
+/// muxer use.
 #[cfg(feature = "registry")]
 fn register_flac(ctx: &mut oxideav_core::RuntimeContext) {
     let cid = CodecId::new("flac");
@@ -366,10 +371,24 @@ fn register_flac(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_sample_rate(192_000);
 
     ctx.codecs.register(
-        CodecInfo::new(cid)
+        CodecInfo::new(cid.clone())
             .capabilities(dec_caps)
             .decoder(flac_decoder::make_decoder)
             .tags([CodecTag::fourcc(b"flac"), CodecTag::matroska("A_FLAC")]),
+    );
+
+    let enc_caps = CodecCapabilities::audio("flac_audiotoolbox")
+        .with_lossy(false)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(8)
+        .with_max_sample_rate(192_000);
+
+    ctx.codecs.register(
+        CodecInfo::new(cid)
+            .capabilities(enc_caps)
+            .encoder(flac_encoder::make_encoder),
     );
 }
 
@@ -481,7 +500,7 @@ mod register_tests {
     }
 
     #[test]
-    fn register_installs_flac_decoder() {
+    fn register_installs_flac_factories() {
         let mut ctx = RuntimeContext::new();
         register(&mut ctx);
         let id = CodecId::new("flac");
@@ -489,12 +508,11 @@ mod register_tests {
             ctx.codecs.has_decoder(&id),
             "FLAC decoder not registered after register()"
         );
-        // FLAC encoder is symmetric on AT (macOS 13+) but the encoder
-        // bring-up lands in a follow-up round. The current expectation
-        // is decode-only; revise this assertion when encoder ships.
+        // Round 218 wired the encoder side — FLAC is now symmetric on
+        // AT (macOS 13+) and both factories register together.
         assert!(
-            !ctx.codecs.has_encoder(&id),
-            "FLAC encoder is decode-only this round"
+            ctx.codecs.has_encoder(&id),
+            "FLAC encoder not registered after register()"
         );
     }
 }

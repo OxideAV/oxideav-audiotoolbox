@@ -9,6 +9,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 218: FLAC encoder.** Completes the symmetric AudioToolbox
+  FLAC bridge — round 10 shipped decode via `kAudioFormatFLAC`
+  (`'flac'`), round 218 adds the encoder side. Implementation
+  `flac_audiotoolbox`, `priority = 10`, `hardware_accelerated = true`,
+  `lossy = false`, max 8 channels, max 192 kHz.
+  - New `src/flac_encoder.rs` with `FlacAtEncoder` implementing
+    `oxideav_core::Encoder`. Input: interleaved S16 or S32 PCM in
+    `AudioFrame::data[0]`. Output: one raw FLAC packet per encoded
+    block (no container framing — the `fLaC` signature + metadata
+    chain lives at the file or `dfLa`-in-container level, not on
+    every packet).
+  - **Empirical AT-side discovery #1** (round 218 probe across every
+    `(PCM input width × source-data flag)` combination): AT's FLAC
+    encoder slot ACCEPTS S16 → FLAC(16), S16 → FLAC(24), S32 →
+    FLAC(16/20/24); REJECTS S32 → FLAC(32) with
+    `kAudioConverterErr_FormatNotSupported` (`'fmt?'` = 1718449215).
+    AT ships no 32-bit FLAC compression tier on macOS 14/15 slots.
+    The encoder caps compressed bit depth at 24-bit for S32 input
+    (lossless within the 24-bit range; S32 PCM bytes that fit there
+    round-trip byte-identically through the 24-bit compressor).
+  - **Empirical AT-side discovery #2**: AT's FLAC encoder calls back
+    **twice** per `FillComplexBuffer` invocation (one frame-of-input
+    request + one look-ahead pull) and the converter locks itself
+    into a permanent end-of-stream state the moment the PCM input
+    callback returns 0 bytes — that lock is unrecoverable; no amount
+    of fresh PCM injected on later FCB invocations will unstick the
+    encoder. The fix is a **persistent PCM feeder context** held in
+    a `Box<PcmContext>` on the encoder, with a one-packet-of-slack
+    discipline (the encoder only invokes FCB once the queue holds at
+    least two packets' worth so the look-ahead pull is always
+    satisfied). Same shape as the iLBC / AMR-NB / HE-AAC slack
+    patterns the decoder side already used, applied to the
+    compressed-output side.
+  - **Magic-cookie emission**: encoder reads back
+    `kAudioConverterCompressionMagicCookie` after configuring the
+    converter — AT vends a fully formed `dfLa` ISOBMFF box (or a
+    near-equivalent FLAC-in-MP4 metadata chunk) that a downstream
+    muxer can paste verbatim into a `dfLa` sample-entry box. The
+    cookie is published through `output_params.extradata`. If the
+    property query fails (on an older macOS slot), the encoder
+    synthesises a minimal `dfLa` cookie from the configured
+    `(sample_rate, channels, output_bit_depth)` using the
+    `flac::build_magic_cookie` builder the decoder side validated
+    round 10.
+  - **`PcmContext`**: queue-backed feeder with `read_pos` cursor +
+    periodic compaction (drains the front half once the cursor
+    crosses it). Held in a `Box` so the address AT receives via the
+    callback user-data pointer stays stable across `Vec` mutations.
+    The callback always serves the largest available subset of
+    what AT asks for, only signalling EOF when truly empty and the
+    flush path has been entered.
+  - **Block size**: `DEFAULT_FRAME_LENGTH = 4096` (RFC 9639 §9.1.2
+    Table 1 code 11), matching every fixture in
+    `docs/audio/flac/fixtures/`.
+  - **Per-packet PTS**: each emitted packet advances `pts` by
+    `frame_length` samples; the encoder is intra-only (each FLAC
+    frame is independently decodable).
+  - **Tags claimed**: cascaded through the decoder's already-claimed
+    `fourcc('flac')` + Matroska `A_FLAC` — the encoder shares the
+    `CodecId("flac")` so the registry routes both directions.
+  - New `tests/flac_roundtrip.rs` end-to-end test: 2 seconds of
+    48 kHz / 16-bit stereo PCM (440 Hz sine + 12-bit deterministic
+    LCG noise so the entropy coder does real work) →
+    `FlacAtEncoder` → 23 raw FLAC packets + encoder-vended `dfLa`
+    cookie → `FlacAtDecoder` → **188,416 / 192,000 i16 samples
+    bit-exact at zero priming offset**. Searches a one-packet-wide
+    priming window and demands ≥ 3 full packets (24,576 samples)
+    survive bit-exact — proves the codec isn't just lossy with a
+    lucky prefix.
+  - 7 new unit tests (`make_encoder_succeeds_s16`,
+    `make_encoder_succeeds_s32`,
+    `make_encoder_rejects_unsupported_sample_format`,
+    `make_encoder_rejects_too_many_channels`,
+    `encoder_publishes_dfla_magic_cookie`,
+    `output_params_echo_input_format`,
+    `s32_cookie_declares_24bit_compressed_depth`).
+  - `register_flac` in `src/lib.rs` now installs **both** decoder
+    and encoder factories (round 10 + round 218 together complete
+    the FLAC row); the `register_installs_flac_factories` test
+    asserts both halves register.
+
 - **Round 212: ALAC decoder S32 output path.** Before this round
   `AlacAtDecoder` always wired its output ASBD to `pcm_s16`, so
   24-bit and 32-bit ALAC tracks silently lost their low-order
