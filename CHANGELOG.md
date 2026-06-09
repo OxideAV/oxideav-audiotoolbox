@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.3...v0.0.4) - 2026-06-09
+
+### Other
+
+- round 265: typed AudioFormatId classifier for ASBD format_id
+- drop release-plz.toml — use release-plz defaults across the workspace
+- round 224: Opus decoder + encoder via AudioConverter
+- round 218: FLAC encoder via AudioConverter — bit-exact lossless roundtrip
+- round 212: ALAC decoder S32 output path (lossless 24/32-bit tightening)
+- round 10: FLAC (RFC 9639) decode via AudioConverter
+- round 9: MP3 (MPEG-1/2/2.5 Audio Layer III) decode via AudioConverter
+
 ### Added
 
 - **Round 265: typed `AudioFormatId` classifier for ASBD `format_id`**
