@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 265: typed `AudioFormatId` classifier for ASBD `format_id`**
+  (sys-surface tightening). The CoreAudio C surface treats
+  `AudioStreamBasicDescription::format_id` as a raw `u32` FourCC
+  (`kAudioFormat*`). That works for setting the field but loses type-
+  system traction the moment a caller wants to introspect "which codec
+  is this ASBD describing" — every introspection ends up as a `match`
+  ladder against bare integer constants. This round adds:
+  - **`AudioFormatId` enum** in `src/sys.rs` with one variant per wired
+    `K_AUDIO_FORMAT_*` constant (15 named arms: `LinearPcm` +
+    14 compressed codec slots covering AAC-LC / AAC-HE / AAC-HE-v2 /
+    AAC-LD / AAC-ELD / ALAC / iLBC / AMR-NB / AMR-WB / MPEG Layer I /
+    II / III / FLAC / Opus) plus an `Unknown(u32)` tail-case that
+    preserves the raw value for unwired FourCCs so the classifier stays
+    total.
+  - **`AudioFormatId::from_u32` / `as_u32`** — round-trip pair;
+    `from_u32(raw).as_u32() == raw` for every value (the `Unknown`
+    tail-case carries the input verbatim).
+  - **`AudioFormatId::is_linear_pcm` / `is_compressed_audio`** — typed
+    predicates that split the wired set on the only axis CoreAudio
+    FFI consumers actually branch on. `Unknown` returns `false` on
+    both; callers needing to act on an unwired FourCC must match the
+    variant directly.
+  - **`AudioStreamBasicDescription::audio_format_id`** — typed view of
+    the `format_id` field; equivalent to
+    `AudioFormatId::from_u32(self.format_id)` but reads naturally at
+    call sites that already hold an ASBD.
+  - **`AudioStreamBasicDescription::is_linear_pcm` /
+    `is_compressed_audio`** — convenience predicates forwarding to
+    the typed enum.
+  - 5 new unit tests pin the surface:
+    `audio_format_id_classifies_every_wired_constant` (round-trip
+    over all 15 named variants), `audio_format_id_unknown_round_trips_raw_value`
+    (a `'zzzz'` = 0x78787878 FourCC stays as `Unknown` and round-trips
+    + reports `false` on both predicates),
+    `audio_format_id_predicate_axes` (every wired variant satisfies
+    `is_linear_pcm() XOR is_compressed_audio()`),
+    `asbd_audio_format_id_accessor_matches_constructors` (17 ASBD
+    constructors covering every named variant: three PCM
+    constructors + every compressed-codec constructor),
+    `asbd_predicates_split_pcm_vs_compressed_constructors`
+    (constructor-side check that PCM constructors satisfy
+    `is_linear_pcm()` only and every compressed constructor
+    satisfies `is_compressed_audio()` only), and
+    `asbd_unknown_format_id_falls_through_predicates`
+    (hand-crafted unwired FourCC reports `false` on both predicates).
+  - Adding a new codec slot is now a four-line change: a
+    `K_AUDIO_FORMAT_*` const, an enum variant, and the two map arms
+    in `from_u32` / `as_u32`. Existing FFI paths and constructors are
+    byte-identical — the surface is purely additive.
+
 - **Round 224: Opus decoder + encoder via `kAudioFormatOpus`** (RFC
   6716 + RFC 7845 + RFC 8251 / Apple `CoreAudioBaseTypes.h`
   `kAudioFormatOpus = 'opus'`). Wires both halves of the symmetric

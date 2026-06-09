@@ -146,6 +146,134 @@ pub const K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE: u32 = 0x646D6763; // 'dm
 /// cookie (for ALAC: 24 or 48 bytes).
 pub const K_AUDIO_CONVERTER_COMPRESSION_MAGIC_COOKIE: u32 = 0x636D6763; // 'cmgc'
 
+/// Typed classification of the `AudioStreamBasicDescription::format_id`
+/// field across every codec slot this bridge wires.
+///
+/// The CoreAudio C surface treats `format_id` as a raw `u32` FourCC
+/// (`kAudioFormat*`). That works for setting fields but loses type-
+/// system traction the moment a caller wants to introspect "which
+/// codec is this ASBD describing" — every introspection collapses to
+/// a `match` ladder against the bare integer constants. This enum
+/// gives that ladder a single canonical home:
+/// [`AudioFormatId::from_u32`] classifies the raw value,
+/// [`AudioFormatId::as_u32`] round-trips back, and the `is_*`
+/// predicates expose the two useful axes (linear-PCM vs compressed
+/// audio) without the caller restating the constant set.
+///
+/// Variants are kept exactly aligned with the `K_AUDIO_FORMAT_*`
+/// constants defined above; the `Unknown(u32)` tail-case carries
+/// raw values that don't fall in the bridge's wired set (every
+/// other AudioToolbox slot we haven't pulled a constant for yet)
+/// so the introspector stays total. Adding a new codec slot is
+/// a four-line change: a `K_AUDIO_FORMAT_*` const, an enum variant,
+/// and the two map arms in `from_u32` / `as_u32`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioFormatId {
+    /// `kAudioFormatLinearPCM` — uncompressed interleaved PCM. The only
+    /// non-compressed variant; every other arm describes a compressed
+    /// codec slot.
+    LinearPcm,
+    /// `kAudioFormatMPEG4AAC` — AAC LC (AOT 2).
+    Mpeg4AacLc,
+    /// `kAudioFormatMPEG4AAC_HE` — HE-AAC v1 (LC + SBR, AOT 5).
+    Mpeg4AacHe,
+    /// `kAudioFormatMPEG4AAC_HE_V2` — HE-AAC v2 (LC + SBR + PS, AOT 29).
+    Mpeg4AacHeV2,
+    /// `kAudioFormatMPEG4AAC_LD` — AAC Low Delay (AOT 23).
+    Mpeg4AacLd,
+    /// `kAudioFormatMPEG4AAC_ELD` — AAC Enhanced Low Delay (AOT 39).
+    Mpeg4AacEld,
+    /// `kAudioFormatAppleLossless` — ALAC.
+    AppleLossless,
+    /// `kAudioFormatiLBC` — Internet Low Bitrate Codec (RFC 3951).
+    Ilbc,
+    /// `kAudioFormatAMR` — AMR Narrowband (3GPP TS 26.071).
+    AmrNb,
+    /// `kAudioFormatAMR_WB` — AMR Wideband (3GPP TS 26.171 / 26.201).
+    AmrWb,
+    /// `kAudioFormatMPEGLayer1` — MPEG audio Layer I.
+    MpegLayer1,
+    /// `kAudioFormatMPEGLayer2` — MPEG audio Layer II.
+    MpegLayer2,
+    /// `kAudioFormatMPEGLayer3` — MPEG audio Layer III ("MP3").
+    MpegLayer3,
+    /// `kAudioFormatFLAC` — Free Lossless Audio Codec (RFC 9639).
+    Flac,
+    /// `kAudioFormatOpus` — IETF Opus (RFC 6716 / 7845 / 8251).
+    Opus,
+    /// Any FourCC the bridge doesn't have a wired constant for. Carries
+    /// the raw value so call-sites can still report it (e.g. error
+    /// messages, debug introspection) without losing information.
+    Unknown(u32),
+}
+
+impl AudioFormatId {
+    /// Classify a raw `format_id` value.
+    ///
+    /// Linear-PCM and every wired compressed-codec slot map to their
+    /// named variant; anything else goes through `Unknown(raw)`.
+    pub fn from_u32(raw: u32) -> Self {
+        match raw {
+            K_AUDIO_FORMAT_LINEAR_PCM => Self::LinearPcm,
+            K_AUDIO_FORMAT_MPEG4_AAC => Self::Mpeg4AacLc,
+            K_AUDIO_FORMAT_MPEG4_AAC_HE => Self::Mpeg4AacHe,
+            K_AUDIO_FORMAT_MPEG4_AAC_HE_V2 => Self::Mpeg4AacHeV2,
+            K_AUDIO_FORMAT_MPEG4_AAC_LD => Self::Mpeg4AacLd,
+            K_AUDIO_FORMAT_MPEG4_AAC_ELD => Self::Mpeg4AacEld,
+            K_AUDIO_FORMAT_APPLE_LOSSLESS => Self::AppleLossless,
+            K_AUDIO_FORMAT_ILBC => Self::Ilbc,
+            K_AUDIO_FORMAT_AMR => Self::AmrNb,
+            K_AUDIO_FORMAT_AMR_WB => Self::AmrWb,
+            K_AUDIO_FORMAT_MPEG_LAYER_1 => Self::MpegLayer1,
+            K_AUDIO_FORMAT_MPEG_LAYER_2 => Self::MpegLayer2,
+            K_AUDIO_FORMAT_MPEG_LAYER_3 => Self::MpegLayer3,
+            K_AUDIO_FORMAT_FLAC => Self::Flac,
+            K_AUDIO_FORMAT_OPUS => Self::Opus,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Recover the raw `format_id` FourCC. Round-trips
+    /// `from_u32(raw).as_u32() == raw` for every value, since the
+    /// `Unknown` tail-case preserves the input verbatim.
+    pub fn as_u32(self) -> u32 {
+        match self {
+            Self::LinearPcm => K_AUDIO_FORMAT_LINEAR_PCM,
+            Self::Mpeg4AacLc => K_AUDIO_FORMAT_MPEG4_AAC,
+            Self::Mpeg4AacHe => K_AUDIO_FORMAT_MPEG4_AAC_HE,
+            Self::Mpeg4AacHeV2 => K_AUDIO_FORMAT_MPEG4_AAC_HE_V2,
+            Self::Mpeg4AacLd => K_AUDIO_FORMAT_MPEG4_AAC_LD,
+            Self::Mpeg4AacEld => K_AUDIO_FORMAT_MPEG4_AAC_ELD,
+            Self::AppleLossless => K_AUDIO_FORMAT_APPLE_LOSSLESS,
+            Self::Ilbc => K_AUDIO_FORMAT_ILBC,
+            Self::AmrNb => K_AUDIO_FORMAT_AMR,
+            Self::AmrWb => K_AUDIO_FORMAT_AMR_WB,
+            Self::MpegLayer1 => K_AUDIO_FORMAT_MPEG_LAYER_1,
+            Self::MpegLayer2 => K_AUDIO_FORMAT_MPEG_LAYER_2,
+            Self::MpegLayer3 => K_AUDIO_FORMAT_MPEG_LAYER_3,
+            Self::Flac => K_AUDIO_FORMAT_FLAC,
+            Self::Opus => K_AUDIO_FORMAT_OPUS,
+            Self::Unknown(raw) => raw,
+        }
+    }
+
+    /// True iff the format describes uncompressed linear PCM
+    /// (`LinearPcm`). Useful when a caller needs to branch on
+    /// "compressed-source vs raw-PCM-source" without reverse-mapping
+    /// the FourCC manually.
+    pub fn is_linear_pcm(self) -> bool {
+        matches!(self, Self::LinearPcm)
+    }
+
+    /// True iff the format describes a compressed codec slot (every
+    /// wired variant except `LinearPcm`). The `Unknown` tail-case
+    /// returns `false` — callers that want to be explicit about an
+    /// unwired FourCC should match the variant directly.
+    pub fn is_compressed_audio(self) -> bool {
+        !matches!(self, Self::LinearPcm | Self::Unknown(_))
+    }
+}
+
 /// AudioStreamBasicDescription — the core format descriptor.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -162,6 +290,33 @@ pub struct AudioStreamBasicDescription {
 }
 
 impl AudioStreamBasicDescription {
+    /// Typed view of the `format_id` field.
+    ///
+    /// Equivalent to [`AudioFormatId::from_u32`] applied to the raw
+    /// `format_id`. Lets a caller match on the typed enum rather
+    /// than spelling out `K_AUDIO_FORMAT_*` constants — useful in
+    /// downstream code that introspects an already-built ASBD
+    /// (e.g. confirming a magic-cookie-driven decode path was wired
+    /// against the expected codec slot, or branching on linear-PCM
+    /// vs compressed-source in a generic FFI helper).
+    pub fn audio_format_id(&self) -> AudioFormatId {
+        AudioFormatId::from_u32(self.format_id)
+    }
+
+    /// Convenience predicate: this ASBD describes uncompressed
+    /// linear PCM. Equivalent to `self.audio_format_id().is_linear_pcm()`
+    /// but reads more naturally at call sites that branch on it.
+    pub fn is_linear_pcm(&self) -> bool {
+        self.audio_format_id().is_linear_pcm()
+    }
+
+    /// Convenience predicate: this ASBD describes a compressed codec
+    /// slot the bridge knows about. Equivalent to
+    /// `self.audio_format_id().is_compressed_audio()`.
+    pub fn is_compressed_audio(&self) -> bool {
+        self.audio_format_id().is_compressed_audio()
+    }
+
     /// Construct an ASBD for 32-bit float interleaved PCM.
     pub fn pcm_float32(sample_rate: f64, channels: u32) -> Self {
         let bps = 4u32; // bytes per sample
@@ -1015,5 +1170,240 @@ mod tests {
         // 60 ms at 48 kHz = 2880 frames per packet (max Opus frame).
         let a = AudioStreamBasicDescription::opus(48_000.0, 2, 2880);
         assert_eq!(a.frames_per_packet, 2880);
+    }
+
+    // ─────────── AudioFormatId typed classifier round-trip ───────────
+
+    #[test]
+    fn audio_format_id_classifies_every_wired_constant() {
+        // Each named arm must classify its constant and round-trip the
+        // raw value verbatim. If a new K_AUDIO_FORMAT_* is added in
+        // the constants block above, the matching variant should be
+        // appended here to keep this test the canonical pin.
+        let cases = [
+            (K_AUDIO_FORMAT_LINEAR_PCM, AudioFormatId::LinearPcm),
+            (K_AUDIO_FORMAT_MPEG4_AAC, AudioFormatId::Mpeg4AacLc),
+            (K_AUDIO_FORMAT_MPEG4_AAC_HE, AudioFormatId::Mpeg4AacHe),
+            (K_AUDIO_FORMAT_MPEG4_AAC_HE_V2, AudioFormatId::Mpeg4AacHeV2),
+            (K_AUDIO_FORMAT_MPEG4_AAC_LD, AudioFormatId::Mpeg4AacLd),
+            (K_AUDIO_FORMAT_MPEG4_AAC_ELD, AudioFormatId::Mpeg4AacEld),
+            (K_AUDIO_FORMAT_APPLE_LOSSLESS, AudioFormatId::AppleLossless),
+            (K_AUDIO_FORMAT_ILBC, AudioFormatId::Ilbc),
+            (K_AUDIO_FORMAT_AMR, AudioFormatId::AmrNb),
+            (K_AUDIO_FORMAT_AMR_WB, AudioFormatId::AmrWb),
+            (K_AUDIO_FORMAT_MPEG_LAYER_1, AudioFormatId::MpegLayer1),
+            (K_AUDIO_FORMAT_MPEG_LAYER_2, AudioFormatId::MpegLayer2),
+            (K_AUDIO_FORMAT_MPEG_LAYER_3, AudioFormatId::MpegLayer3),
+            (K_AUDIO_FORMAT_FLAC, AudioFormatId::Flac),
+            (K_AUDIO_FORMAT_OPUS, AudioFormatId::Opus),
+        ];
+        for (raw, expected) in cases {
+            let got = AudioFormatId::from_u32(raw);
+            assert_eq!(
+                got, expected,
+                "raw {raw:#010x} should classify to {expected:?}, got {got:?}"
+            );
+            assert_eq!(
+                got.as_u32(),
+                raw,
+                "round-trip {expected:?}.as_u32() should equal {raw:#010x}"
+            );
+        }
+    }
+
+    #[test]
+    fn audio_format_id_unknown_round_trips_raw_value() {
+        // Pick a value that is unambiguously not in our wired set.
+        // (Lowercase ASCII 'xxxx' = 0x78787878 has never been an
+        // AT format-id FourCC.)
+        let raw = 0x7878_7878u32;
+        let id = AudioFormatId::from_u32(raw);
+        assert_eq!(id, AudioFormatId::Unknown(raw));
+        assert_eq!(id.as_u32(), raw);
+        // Unknown is neither linear-PCM nor wired-compressed: callers
+        // that want to act on unwired FourCCs must match the variant
+        // directly, not lean on the predicates.
+        assert!(!id.is_linear_pcm());
+        assert!(!id.is_compressed_audio());
+    }
+
+    #[test]
+    fn audio_format_id_predicate_axes() {
+        // Linear-PCM is the only "is_linear_pcm" variant; everything
+        // else (except Unknown) is compressed audio. The two
+        // predicates are mutually exclusive for every wired variant.
+        let wired = [
+            AudioFormatId::LinearPcm,
+            AudioFormatId::Mpeg4AacLc,
+            AudioFormatId::Mpeg4AacHe,
+            AudioFormatId::Mpeg4AacHeV2,
+            AudioFormatId::Mpeg4AacLd,
+            AudioFormatId::Mpeg4AacEld,
+            AudioFormatId::AppleLossless,
+            AudioFormatId::Ilbc,
+            AudioFormatId::AmrNb,
+            AudioFormatId::AmrWb,
+            AudioFormatId::MpegLayer1,
+            AudioFormatId::MpegLayer2,
+            AudioFormatId::MpegLayer3,
+            AudioFormatId::Flac,
+            AudioFormatId::Opus,
+        ];
+        for id in wired {
+            assert!(
+                id.is_linear_pcm() ^ id.is_compressed_audio(),
+                "{id:?} should be linear-PCM XOR compressed-audio (one and only one)"
+            );
+        }
+        assert!(AudioFormatId::LinearPcm.is_linear_pcm());
+        assert!(!AudioFormatId::LinearPcm.is_compressed_audio());
+        assert!(AudioFormatId::Mpeg4AacLc.is_compressed_audio());
+        assert!(!AudioFormatId::Mpeg4AacLc.is_linear_pcm());
+        assert!(AudioFormatId::Flac.is_compressed_audio());
+        assert!(AudioFormatId::Opus.is_compressed_audio());
+    }
+
+    #[test]
+    fn asbd_audio_format_id_accessor_matches_constructors() {
+        // Every ASBD constructor sets format_id to a known constant;
+        // audio_format_id() should classify back to the matching
+        // typed variant. This is the load-bearing assertion: the
+        // accessor is the way downstream code introspects "what is
+        // this descriptor for" without re-reading the raw u32.
+        let cases: &[(AudioStreamBasicDescription, AudioFormatId)] = &[
+            (
+                AudioStreamBasicDescription::pcm_float32(48_000.0, 2),
+                AudioFormatId::LinearPcm,
+            ),
+            (
+                AudioStreamBasicDescription::pcm_s16(48_000.0, 2),
+                AudioFormatId::LinearPcm,
+            ),
+            (
+                AudioStreamBasicDescription::pcm_s32(48_000.0, 2),
+                AudioFormatId::LinearPcm,
+            ),
+            (
+                AudioStreamBasicDescription::mpeg4_aac(48_000.0, 2),
+                AudioFormatId::Mpeg4AacLc,
+            ),
+            (
+                AudioStreamBasicDescription::mpeg4_aac_he(48_000.0, 2),
+                AudioFormatId::Mpeg4AacHe,
+            ),
+            (
+                AudioStreamBasicDescription::mpeg4_aac_he_v2(48_000.0, 2),
+                AudioFormatId::Mpeg4AacHeV2,
+            ),
+            (
+                AudioStreamBasicDescription::mpeg4_aac_ld(48_000.0, 2),
+                AudioFormatId::Mpeg4AacLd,
+            ),
+            (
+                AudioStreamBasicDescription::mpeg4_aac_eld(48_000.0, 2),
+                AudioFormatId::Mpeg4AacEld,
+            ),
+            (
+                AudioStreamBasicDescription::apple_lossless(
+                    48_000.0,
+                    2,
+                    K_AF_APPLE_LOSSLESS_16_BIT,
+                    4096,
+                ),
+                AudioFormatId::AppleLossless,
+            ),
+            (AudioStreamBasicDescription::ilbc(160), AudioFormatId::Ilbc),
+            (AudioStreamBasicDescription::amr_nb(), AudioFormatId::AmrNb),
+            (AudioStreamBasicDescription::amr_wb(), AudioFormatId::AmrWb),
+            (
+                AudioStreamBasicDescription::mpeg_layer1(44_100.0, 2),
+                AudioFormatId::MpegLayer1,
+            ),
+            (
+                AudioStreamBasicDescription::mpeg_layer2(44_100.0, 2),
+                AudioFormatId::MpegLayer2,
+            ),
+            (
+                AudioStreamBasicDescription::mpeg_layer3(44_100.0, 2, 1152),
+                AudioFormatId::MpegLayer3,
+            ),
+            (
+                AudioStreamBasicDescription::flac(48_000.0, 2, K_AF_APPLE_LOSSLESS_16_BIT, 4096),
+                AudioFormatId::Flac,
+            ),
+            (
+                AudioStreamBasicDescription::opus(48_000.0, 2, 960),
+                AudioFormatId::Opus,
+            ),
+        ];
+        for (asbd, expected) in cases {
+            assert_eq!(
+                asbd.audio_format_id(),
+                *expected,
+                "ASBD format_id {:#010x} should classify to {:?}",
+                asbd.format_id,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn asbd_predicates_split_pcm_vs_compressed_constructors() {
+        // The three PCM constructors are linear-PCM; every other
+        // constructor produces a compressed-audio ASBD. Pinning this
+        // makes the accessor's contract testable from the predicate
+        // side too, not just the typed-variant side.
+        for asbd in [
+            AudioStreamBasicDescription::pcm_float32(48_000.0, 2),
+            AudioStreamBasicDescription::pcm_s16(48_000.0, 2),
+            AudioStreamBasicDescription::pcm_s32(48_000.0, 2),
+        ] {
+            assert!(asbd.is_linear_pcm());
+            assert!(!asbd.is_compressed_audio());
+        }
+        for asbd in [
+            AudioStreamBasicDescription::mpeg4_aac(48_000.0, 2),
+            AudioStreamBasicDescription::mpeg4_aac_he(48_000.0, 2),
+            AudioStreamBasicDescription::mpeg4_aac_he_v2(48_000.0, 2),
+            AudioStreamBasicDescription::mpeg4_aac_ld(48_000.0, 2),
+            AudioStreamBasicDescription::mpeg4_aac_eld(48_000.0, 2),
+            AudioStreamBasicDescription::apple_lossless(
+                48_000.0,
+                2,
+                K_AF_APPLE_LOSSLESS_16_BIT,
+                4096,
+            ),
+            AudioStreamBasicDescription::ilbc(240),
+            AudioStreamBasicDescription::amr_nb(),
+            AudioStreamBasicDescription::amr_wb(),
+            AudioStreamBasicDescription::mpeg_layer1(44_100.0, 2),
+            AudioStreamBasicDescription::mpeg_layer2(44_100.0, 2),
+            AudioStreamBasicDescription::mpeg_layer3(44_100.0, 2, 1152),
+            AudioStreamBasicDescription::flac(48_000.0, 2, K_AF_APPLE_LOSSLESS_16_BIT, 4096),
+            AudioStreamBasicDescription::opus(48_000.0, 2, 960),
+        ] {
+            assert!(!asbd.is_linear_pcm());
+            assert!(
+                asbd.is_compressed_audio(),
+                "compressed constructor should pass is_compressed_audio for format_id {:#010x}",
+                asbd.format_id
+            );
+        }
+    }
+
+    #[test]
+    fn asbd_unknown_format_id_falls_through_predicates() {
+        // A hand-crafted ASBD with a FourCC we don't have wired
+        // should classify as Unknown and report neither linear-PCM
+        // nor compressed-audio — callers needing to act on an
+        // unwired FourCC must match the variant directly.
+        let asbd = AudioStreamBasicDescription {
+            format_id: 0x7A7A_7A7A, // 'zzzz' — not in our wired set
+            ..AudioStreamBasicDescription::default()
+        };
+        let id = asbd.audio_format_id();
+        assert!(matches!(id, AudioFormatId::Unknown(0x7A7A_7A7A)));
+        assert!(!asbd.is_linear_pcm());
+        assert!(!asbd.is_compressed_audio());
     }
 }
