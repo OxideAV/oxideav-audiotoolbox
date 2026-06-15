@@ -272,6 +272,94 @@ impl AudioFormatId {
     pub fn is_compressed_audio(self) -> bool {
         !matches!(self, Self::LinearPcm | Self::Unknown(_))
     }
+
+    /// The four-character FourCC string the `format_id` decodes to, as
+    /// owned ASCII bytes rendered into a `String`.
+    ///
+    /// Every wired `kAudioFormat*` value is a packed big-endian FourCC
+    /// (e.g. `0x61616320` → `"aac "`); this renders the four bytes back
+    /// to their printable form for debug / error reporting, mapping any
+    /// non-printable byte to `'.'` so the result is always a clean
+    /// four-character string. The `Unknown` tail-case renders its raw
+    /// value the same way, so an unwired FourCC still reports legibly.
+    pub fn fourcc_str(self) -> String {
+        let raw = self.as_u32();
+        raw.to_be_bytes()
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_graphic() || b == b' ' {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
+            .collect()
+    }
+
+    /// The canonical oxideav codec-id string this AudioToolbox format
+    /// slot maps to — the same string the bridge's `register()` path
+    /// hands to [`oxideav_core::CodecId::new`].
+    ///
+    /// Note the five AAC AOT slots (`Mpeg4AacLc` / `Mpeg4AacHe` /
+    /// `Mpeg4AacHeV2` / `Mpeg4AacLd` / `Mpeg4AacEld`) all collapse to
+    /// the single `"aac"` codec id — the AOT distinction is carried
+    /// inside the ASBD's `format_id` / the AAC profile option, not in
+    /// the registry key (the registry registers one `"aac"`
+    /// decoder/encoder pair that internally selects the AOT). The
+    /// three MPEG audio layers map to `"mp1"` / `"mp2"` / `"mp3"`.
+    ///
+    /// `LinearPcm` maps to `"pcm"`; the `Unknown` tail-case has no
+    /// codec-id binding and returns `None`.
+    pub fn codec_id_str(self) -> Option<&'static str> {
+        Some(match self {
+            Self::LinearPcm => "pcm",
+            Self::Mpeg4AacLc
+            | Self::Mpeg4AacHe
+            | Self::Mpeg4AacHeV2
+            | Self::Mpeg4AacLd
+            | Self::Mpeg4AacEld => "aac",
+            Self::AppleLossless => "alac",
+            Self::Ilbc => "ilbc",
+            Self::AmrNb => "amr_nb",
+            Self::AmrWb => "amr_wb",
+            Self::MpegLayer1 => "mp1",
+            Self::MpegLayer2 => "mp2",
+            Self::MpegLayer3 => "mp3",
+            Self::Flac => "flac",
+            Self::Opus => "opus",
+            Self::Unknown(_) => return None,
+        })
+    }
+
+    /// True iff the format describes a **lossless** codec slot — ALAC
+    /// (Apple Lossless) or FLAC. Both reconstruct the source PCM
+    /// bit-exactly, so a bridge that has to pick an output PCM width
+    /// must preserve the full source bit depth (the S32 output path)
+    /// rather than truncating to S16.
+    ///
+    /// `LinearPcm` is uncompressed (not a *codec* slot) and the lossy
+    /// codecs / `Unknown` all return `false`.
+    pub fn is_lossless(self) -> bool {
+        matches!(self, Self::AppleLossless | Self::Flac)
+    }
+
+    /// True iff the format is one of the five MPEG-4 AAC Audio Object
+    /// Type slots (LC / HE / HE v2 / LD / ELD). These share the single
+    /// `"aac"` codec id and route through the same AudioConverter
+    /// encode/decode path, distinguished only by their `format_id`
+    /// and per-AOT packet geometry. Useful when a caller needs to
+    /// branch "is this any flavour of AAC" without enumerating the
+    /// five variants.
+    pub fn is_aac_family(self) -> bool {
+        matches!(
+            self,
+            Self::Mpeg4AacLc
+                | Self::Mpeg4AacHe
+                | Self::Mpeg4AacHeV2
+                | Self::Mpeg4AacLd
+                | Self::Mpeg4AacEld
+        )
+    }
 }
 
 /// AudioStreamBasicDescription — the core format descriptor.
@@ -315,6 +403,22 @@ impl AudioStreamBasicDescription {
     /// `self.audio_format_id().is_compressed_audio()`.
     pub fn is_compressed_audio(&self) -> bool {
         self.audio_format_id().is_compressed_audio()
+    }
+
+    /// Convenience predicate: this ASBD describes a lossless codec slot
+    /// (ALAC or FLAC). Equivalent to
+    /// `self.audio_format_id().is_lossless()`. A bridge picking an
+    /// output PCM width keys off this to choose the full-bit-depth S32
+    /// path over the truncating S16 one.
+    pub fn is_lossless(&self) -> bool {
+        self.audio_format_id().is_lossless()
+    }
+
+    /// Convenience accessor: the canonical oxideav codec-id string this
+    /// ASBD's `format_id` maps to, or `None` for an unwired FourCC.
+    /// Equivalent to `self.audio_format_id().codec_id_str()`.
+    pub fn codec_id_str(&self) -> Option<&'static str> {
+        self.audio_format_id().codec_id_str()
     }
 
     /// Construct an ASBD for 32-bit float interleaved PCM.
@@ -1405,5 +1509,168 @@ mod tests {
         assert!(matches!(id, AudioFormatId::Unknown(0x7A7A_7A7A)));
         assert!(!asbd.is_linear_pcm());
         assert!(!asbd.is_compressed_audio());
+    }
+
+    // ─────────── AudioFormatId family / codec-id / fourcc accessors ───────────
+
+    #[test]
+    fn audio_format_id_fourcc_str_renders_every_wired_constant() {
+        // The rendered FourCC must equal the byte-for-byte string the
+        // constant was defined from (the `// 'xxxx'` comments above).
+        let cases = [
+            (AudioFormatId::LinearPcm, "lpcm"),
+            (AudioFormatId::Mpeg4AacLc, "aac "),
+            (AudioFormatId::Mpeg4AacHe, "aach"),
+            (AudioFormatId::Mpeg4AacHeV2, "aacp"),
+            (AudioFormatId::Mpeg4AacLd, "aacl"),
+            (AudioFormatId::Mpeg4AacEld, "aace"),
+            (AudioFormatId::AppleLossless, "alac"),
+            (AudioFormatId::Ilbc, "ilbc"),
+            (AudioFormatId::AmrNb, "samr"),
+            (AudioFormatId::AmrWb, "sawb"),
+            (AudioFormatId::MpegLayer1, ".mp1"),
+            (AudioFormatId::MpegLayer2, ".mp2"),
+            (AudioFormatId::MpegLayer3, ".mp3"),
+            (AudioFormatId::Flac, "flac"),
+            (AudioFormatId::Opus, "opus"),
+        ];
+        for (id, want) in cases {
+            assert_eq!(id.fourcc_str(), want, "{id:?} FourCC string");
+            // FourCC string is always exactly four characters.
+            assert_eq!(id.fourcc_str().chars().count(), 4);
+        }
+    }
+
+    #[test]
+    fn audio_format_id_fourcc_str_renders_unknown_and_nonprintable() {
+        // 'xxxx' (all-printable) renders verbatim.
+        assert_eq!(AudioFormatId::Unknown(0x7878_7878).fourcc_str(), "xxxx");
+        // A value with non-printable bytes maps those bytes to '.', so
+        // the result is still a clean four-character string.
+        let id = AudioFormatId::Unknown(0x0061_6201); // \0 'a' 'b' \x01
+        assert_eq!(id.fourcc_str(), ".ab.");
+        assert_eq!(id.fourcc_str().chars().count(), 4);
+    }
+
+    #[test]
+    fn audio_format_id_codec_id_str_maps_each_slot() {
+        // The five AAC AOT slots all collapse to "aac"; the three MPEG
+        // layers map to mp1/mp2/mp3; everything else is its own id.
+        assert_eq!(AudioFormatId::LinearPcm.codec_id_str(), Some("pcm"));
+        assert_eq!(AudioFormatId::Mpeg4AacLc.codec_id_str(), Some("aac"));
+        assert_eq!(AudioFormatId::Mpeg4AacHe.codec_id_str(), Some("aac"));
+        assert_eq!(AudioFormatId::Mpeg4AacHeV2.codec_id_str(), Some("aac"));
+        assert_eq!(AudioFormatId::Mpeg4AacLd.codec_id_str(), Some("aac"));
+        assert_eq!(AudioFormatId::Mpeg4AacEld.codec_id_str(), Some("aac"));
+        assert_eq!(AudioFormatId::AppleLossless.codec_id_str(), Some("alac"));
+        assert_eq!(AudioFormatId::Ilbc.codec_id_str(), Some("ilbc"));
+        assert_eq!(AudioFormatId::AmrNb.codec_id_str(), Some("amr_nb"));
+        assert_eq!(AudioFormatId::AmrWb.codec_id_str(), Some("amr_wb"));
+        assert_eq!(AudioFormatId::MpegLayer1.codec_id_str(), Some("mp1"));
+        assert_eq!(AudioFormatId::MpegLayer2.codec_id_str(), Some("mp2"));
+        assert_eq!(AudioFormatId::MpegLayer3.codec_id_str(), Some("mp3"));
+        assert_eq!(AudioFormatId::Flac.codec_id_str(), Some("flac"));
+        assert_eq!(AudioFormatId::Opus.codec_id_str(), Some("opus"));
+        // Unwired FourCC has no codec-id binding.
+        assert_eq!(AudioFormatId::Unknown(0x7878_7878).codec_id_str(), None);
+    }
+
+    #[test]
+    fn audio_format_id_codec_id_str_matches_register_bindings() {
+        // The codec-id strings here must stay in lockstep with what
+        // `lib.rs::register()` passes to `CodecId::new(...)`. These are
+        // the wired registry keys: aac / alac / ilbc / amr_nb / amr_wb
+        // / mp3 / flac / opus. Pin them so a register() rename can't
+        // silently drift the classifier away from the registry.
+        assert_eq!(AudioFormatId::Mpeg4AacLc.codec_id_str(), Some("aac"));
+        assert_eq!(AudioFormatId::AppleLossless.codec_id_str(), Some("alac"));
+        assert_eq!(AudioFormatId::Ilbc.codec_id_str(), Some("ilbc"));
+        assert_eq!(AudioFormatId::AmrNb.codec_id_str(), Some("amr_nb"));
+        assert_eq!(AudioFormatId::AmrWb.codec_id_str(), Some("amr_wb"));
+        assert_eq!(AudioFormatId::MpegLayer3.codec_id_str(), Some("mp3"));
+        assert_eq!(AudioFormatId::Flac.codec_id_str(), Some("flac"));
+        assert_eq!(AudioFormatId::Opus.codec_id_str(), Some("opus"));
+    }
+
+    #[test]
+    fn audio_format_id_is_lossless_only_alac_and_flac() {
+        assert!(AudioFormatId::AppleLossless.is_lossless());
+        assert!(AudioFormatId::Flac.is_lossless());
+        // Everything else — including LinearPCM (uncompressed, but not
+        // a *codec* slot) — is not lossless-compressed.
+        for id in [
+            AudioFormatId::LinearPcm,
+            AudioFormatId::Mpeg4AacLc,
+            AudioFormatId::Mpeg4AacHe,
+            AudioFormatId::Mpeg4AacHeV2,
+            AudioFormatId::Mpeg4AacLd,
+            AudioFormatId::Mpeg4AacEld,
+            AudioFormatId::Ilbc,
+            AudioFormatId::AmrNb,
+            AudioFormatId::AmrWb,
+            AudioFormatId::MpegLayer1,
+            AudioFormatId::MpegLayer2,
+            AudioFormatId::MpegLayer3,
+            AudioFormatId::Opus,
+            AudioFormatId::Unknown(0x7878_7878),
+        ] {
+            assert!(!id.is_lossless(), "{id:?} must not be lossless");
+        }
+    }
+
+    #[test]
+    fn audio_format_id_is_aac_family_groups_five_aots() {
+        for id in [
+            AudioFormatId::Mpeg4AacLc,
+            AudioFormatId::Mpeg4AacHe,
+            AudioFormatId::Mpeg4AacHeV2,
+            AudioFormatId::Mpeg4AacLd,
+            AudioFormatId::Mpeg4AacEld,
+        ] {
+            assert!(id.is_aac_family(), "{id:?} should be AAC family");
+            // Every AAC-family slot maps to the single "aac" codec id.
+            assert_eq!(id.codec_id_str(), Some("aac"));
+        }
+        for id in [
+            AudioFormatId::LinearPcm,
+            AudioFormatId::AppleLossless,
+            AudioFormatId::Ilbc,
+            AudioFormatId::AmrNb,
+            AudioFormatId::AmrWb,
+            AudioFormatId::MpegLayer3,
+            AudioFormatId::Flac,
+            AudioFormatId::Opus,
+            AudioFormatId::Unknown(0x7878_7878),
+        ] {
+            assert!(!id.is_aac_family(), "{id:?} should not be AAC family");
+        }
+    }
+
+    #[test]
+    fn asbd_lossless_and_codec_id_accessors() {
+        // The ALAC + FLAC constructors are lossless; their codec-id
+        // accessors match the registry keys. A lossy constructor is
+        // not lossless.
+        let alac = AudioStreamBasicDescription::apple_lossless(
+            48_000.0,
+            2,
+            K_AF_APPLE_LOSSLESS_24_BIT,
+            4096,
+        );
+        assert!(alac.is_lossless());
+        assert_eq!(alac.codec_id_str(), Some("alac"));
+
+        let flac = AudioStreamBasicDescription::flac(96_000.0, 1, K_AF_APPLE_LOSSLESS_24_BIT, 4096);
+        assert!(flac.is_lossless());
+        assert_eq!(flac.codec_id_str(), Some("flac"));
+
+        let opus = AudioStreamBasicDescription::opus(48_000.0, 2, 960);
+        assert!(!opus.is_lossless());
+        assert_eq!(opus.codec_id_str(), Some("opus"));
+
+        // PCM is uncompressed but not a lossless *codec* slot.
+        let pcm = AudioStreamBasicDescription::pcm_s32(48_000.0, 2);
+        assert!(!pcm.is_lossless());
+        assert_eq!(pcm.codec_id_str(), Some("pcm"));
     }
 }

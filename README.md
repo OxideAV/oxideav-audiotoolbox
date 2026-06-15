@@ -51,7 +51,11 @@ those floors verify the pipeline is wired correctly rather than
 claiming transparency). The decode-only formats (AMR-NB, AMR-WB, MP3)
 have no paired AT encoder, so the registry installs only their decoder
 factories. A typed `AudioFormatId` enum classifies any ASBD's raw
-`format_id` FourCC into the wired codec set.
+`format_id` FourCC into the wired codec set, exposing the format
+family (`is_aac_family`, `is_lossless`, `is_compressed_audio`), the
+canonical oxideav codec-id string each slot registers under
+(`codec_id_str`), and a printable FourCC for diagnostics
+(`fourcc_str`).
 
 ## Opt-out
 

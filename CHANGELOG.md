@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 319: `AudioFormatId` family / codec-id / FourCC accessors**
+  (sys-surface introspection). Round 265 added the typed `AudioFormatId`
+  classifier and its `is_linear_pcm` / `is_compressed_audio` predicates.
+  This round extends that classifier with the four introspection axes
+  CoreAudio FFI consumers actually need beyond "PCM vs compressed",
+  making the enum the single source of truth for the
+  format-id ⇒ codec metadata mapping that `lib.rs::register()`
+  previously hand-coded inline:
+  - **`AudioFormatId::codec_id_str`** — the canonical oxideav codec-id
+    string each AudioToolbox slot maps to (`"aac"` / `"alac"` / `"ilbc"`
+    / `"amr_nb"` / `"amr_wb"` / `"mp1"` / `"mp2"` / `"mp3"` / `"flac"` /
+    `"opus"` / `"pcm"`), matching the registry keys in `register()`.
+    The five AAC AOT slots collapse to the single `"aac"` id; `Unknown`
+    returns `None`.
+  - **`AudioFormatId::is_lossless`** — true only for ALAC + FLAC (the
+    slots whose output PCM width must preserve full source bit depth via
+    the S32 path rather than truncating to S16).
+  - **`AudioFormatId::is_aac_family`** — groups the five MPEG-4 AAC AOT
+    slots (LC / HE / HE-v2 / LD / ELD) that share the `"aac"` codec id
+    and the one AudioConverter encode/decode path.
+  - **`AudioFormatId::fourcc_str`** — renders the packed big-endian
+    FourCC back to a clean four-character string (non-printable bytes
+    map to `'.'`), for debug / error reporting; `Unknown` renders its
+    raw value the same way.
+  - **`AudioStreamBasicDescription::is_lossless` / `codec_id_str`** —
+    convenience accessors forwarding to the typed enum from an
+    already-built ASBD.
+  - 7 new unit tests pin the surface (fourcc-string render over all 15
+    wired constants + non-printable/unknown handling; codec-id mapping
+    per slot; a lockstep pin against the `register()` registry keys;
+    `is_lossless` restricted to ALAC + FLAC; `is_aac_family` over the
+    five AOTs; ASBD-side lossless/codec-id accessors). Existing FFI
+    paths and constructors are byte-identical — the surface is purely
+    additive (205 → 212 lib tests).
+
 - **Round 265: typed `AudioFormatId` classifier for ASBD `format_id`**
   (sys-surface tightening). The CoreAudio C surface treats
   `AudioStreamBasicDescription::format_id` as a raw `u32` FourCC
