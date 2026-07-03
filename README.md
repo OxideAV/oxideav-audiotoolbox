@@ -1,5 +1,7 @@
 # oxideav-audiotoolbox
 
+[![CI](https://github.com/OxideAV/oxideav-audiotoolbox/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-audiotoolbox/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/oxideav-audiotoolbox.svg)](https://crates.io/crates/oxideav-audiotoolbox) [![docs.rs](https://docs.rs/oxideav-audiotoolbox/badge.svg)](https://docs.rs/oxideav-audiotoolbox) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 macOS AudioToolbox hardware decode/encode bridge for the [oxideav](https://github.com/OxideAV/oxideav) framework.
 
 ## Why a bridge crate?
