@@ -56,6 +56,8 @@ Hardware factories register with `priority = 10` — **lower numbers win at reso
 | AMR-NB    | yes     | n/a     | yes (3GPP TS 26.071 narrow-band speech, 8 kHz mono, 8 speech modes + SID + NO_DATA; AT is decode-only) |
 | AMR-WB    | yes     | n/a     | yes (3GPP TS 26.171 / 26.201 wideband speech, 16 kHz mono, 9 speech modes + SID + NO_DATA; AT is decode-only) |
 | MP3       | yes     | n/a     | yes (MPEG-1 / 2 / 2.5 Audio Layer III, mono + stereo, 8 / 11.025 / 12 / 16 / 22.05 / 24 / 32 / 44.1 / 48 kHz; AT is decode-only — ships no MPEG-audio encoder) |
+| MP2       | yes     | n/a     | yes (MPEG Audio Layer II, 1152 samples/frame, shared MPEG-audio bridge; decode-only) |
+| MP1       | yes     | n/a     | yes (MPEG-1 Audio Layer I, 384 samples/frame, shared MPEG-audio bridge; decode-only) |
 | FLAC      | yes     | yes     | yes (RFC 9639, up to 8 channels, 8 / 16 / 20 / 24 / 32-bit, sample rates up to 192 kHz, fixed + variable blocksize; encoder ships S16 / S32 PCM input, AT-side compressed-depth cap at 24-bit) |
 | Opus      | yes     | yes     | yes (RFC 6716 / RFC 7845, 1–2 channels mapping family 0, output rates 8 / 12 / 16 / 24 / 48 kHz, frame durations 2.5 / 5 / 10 / 20 / 40 / 60 ms via `options["frame_duration_ms"]`, default 20 ms) |
 

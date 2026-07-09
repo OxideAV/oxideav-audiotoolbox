@@ -30,6 +30,8 @@
 //! | AMR-NB    | yes     | n/a     | yes (8 kHz mono, 8 speech modes + SID, decode-only) |
 //! | AMR-WB    | yes     | n/a     | yes (16 kHz mono, 9 speech modes + SID, decode-only) |
 //! | MP3       | yes     | n/a     | yes (Layer III, MPEG-1/2/2.5, decode-only) |
+//! | MP2       | yes     | n/a     | yes (Layer II, 1152 samples/frame, decode-only) |
+//! | MP1       | yes     | n/a     | yes (Layer I, 384 samples/frame, decode-only) |
 //! | FLAC      | yes     | yes     | yes (RFC 9639, 4..=32-bit, up to 192 kHz, lossless dfLa cookie) |
 //! | Opus      | yes     | yes     | yes (RFC 6716 / RFC 7845, 1–2 ch family-0, output 8/12/16/24/48 kHz, frame 2.5..60 ms) |
 //!
@@ -155,6 +157,8 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
     register_ilbc(ctx, &inv);
     register_amr_nb(ctx, &inv);
     register_amr_wb(ctx, &inv);
+    register_mp1(ctx, &inv);
+    register_mp2(ctx, &inv);
     register_mp3(ctx, &inv);
     register_flac(ctx, &inv);
     register_opus(ctx, &inv);
@@ -313,6 +317,88 @@ fn register_amr_wb(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsIn
                 .capabilities(dec_caps)
                 .decoder(amr_wb_decoder::make_decoder)
                 .tags([CodecTag::fourcc(b"sawb"), CodecTag::matroska("A_AMR/WB")]),
+        );
+    }
+}
+
+/// Register MP1 (MPEG-1 Audio Layer I) **decoder** factory.
+///
+/// AudioToolbox exposes `kAudioFormatMPEGLayer1` (`'.mp1'`) as a
+/// decompression-only target — the registration is decode-only,
+/// mirroring the Layer III asymmetry. The factory is the shared
+/// MPEG-audio bridge (`mp3_decoder::make_decoder`), which derives the
+/// expected layer from the codec id; a stream whose frames are not
+/// Layer I is rejected with a typed `Unsupported` so resolution falls
+/// through to the entry that owns the actual layer.
+///
+/// Tags claimed:
+///
+/// * FourCC `'.mp1'` — AudioToolbox's identifier.
+/// * Matroska `A_MPEG/L1` — Matroska's CodecID for Layer I audio.
+///
+/// Layer I is fixed at 384 samples per frame across every MPEG
+/// version.
+#[cfg(feature = "registry")]
+fn register_mp1(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
+    let cid = CodecId::new("mp1");
+
+    let dec_caps = CodecCapabilities::audio("mp1_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(2)
+        .with_max_sample_rate(48_000);
+
+    if inv.decodes(sys::AudioFormatId::MpegLayer1) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(dec_caps)
+                .decoder(mp3_decoder::make_decoder)
+                .tags([CodecTag::fourcc(b".mp1"), CodecTag::matroska("A_MPEG/L1")]),
+        );
+    }
+}
+
+/// Register MP2 (MPEG-1 / 2 / 2.5 Audio Layer II) **decoder** factory.
+///
+/// AudioToolbox exposes `kAudioFormatMPEGLayer2` (`'.mp2'`) as a
+/// decompression-only target — decode-only registration through the
+/// shared MPEG-audio bridge (`mp3_decoder::make_decoder`), which
+/// derives the expected layer from the codec id.
+///
+/// Tags claimed:
+///
+/// * FourCC `'.mp2'` — AudioToolbox's identifier.
+/// * Matroska `A_MPEG/L2` — Matroska's CodecID for Layer II audio.
+/// * WAVE format tag `0x0050` — `WAVE_FORMAT_MPEG`, the RIFF / AVI /
+///   WAV tag for MPEG-1 Layer I/II audio chunks (Layer II is the
+///   overwhelmingly common payload under this tag).
+///
+/// Layer II is fixed at 1152 samples per frame across every MPEG
+/// version.
+#[cfg(feature = "registry")]
+fn register_mp2(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
+    let cid = CodecId::new("mp2");
+
+    let dec_caps = CodecCapabilities::audio("mp2_audiotoolbox")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_hardware(true)
+        .with_priority(10)
+        .with_max_channels(2)
+        .with_max_sample_rate(48_000);
+
+    if inv.decodes(sys::AudioFormatId::MpegLayer2) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(dec_caps)
+                .decoder(mp3_decoder::make_decoder)
+                .tags([
+                    CodecTag::fourcc(b".mp2"),
+                    CodecTag::matroska("A_MPEG/L2"),
+                    CodecTag::wave_format(0x0050),
+                ]),
         );
     }
 }
@@ -516,6 +602,8 @@ mod register_tests {
             ("ilbc", F::Ilbc),
             ("amr_nb", F::AmrNb),
             ("amr_wb", F::AmrWb),
+            ("mp1", F::MpegLayer1),
+            ("mp2", F::MpegLayer2),
             ("mp3", F::MpegLayer3),
             ("flac", F::Flac),
             ("opus", F::Opus),
@@ -627,6 +715,24 @@ mod register_tests {
             !ctx.codecs.has_encoder(&id),
             "MP3 encoder must not be registered (AT is decode-only)"
         );
+    }
+
+    #[test]
+    fn register_installs_mp1_mp2_decoders_only() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        for cid in ["mp1", "mp2"] {
+            let id = CodecId::new(cid);
+            assert!(
+                ctx.codecs.has_decoder(&id),
+                "{cid} decoder not registered after register()"
+            );
+            // AT ships no MPEG-audio encoder — decode-only.
+            assert!(
+                !ctx.codecs.has_encoder(&id),
+                "{cid} encoder must not be registered (AT is decode-only)"
+            );
+        }
     }
 
     #[test]

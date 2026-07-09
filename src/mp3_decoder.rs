@@ -74,9 +74,18 @@ struct StreamConfig {
     samples_per_frame: u32,
 }
 
-/// AudioConverter-backed MP3 decoder.
+/// AudioConverter-backed MPEG-audio decoder (Layer I / II / III).
+///
+/// One struct serves all three layers: the registered codec id
+/// (`"mp1"` / `"mp2"` / `"mp3"`) selects the expected layer, and the
+/// first frame header must agree — a mismatched layer surfaces a
+/// typed `Unsupported` error so the registry falls through to the
+/// factory that owns that layer.
 pub struct Mp3AtDecoder {
     codec_id: CodecId,
+    /// The MPEG audio layer this instance is registered to decode,
+    /// derived from the codec id at construction.
+    expected_layer: Layer,
     /// Lazily constructed on the first packet — we need the first
     /// frame header to know the source sample rate / channel count.
     converter: AudioConverterRef,
@@ -106,8 +115,14 @@ impl Mp3AtDecoder {
         // supplied `CodecParameters` (which the muxer may have parsed
         // from container metadata that disagrees with the elementary
         // stream).
+        let expected_layer = match params.codec_id.as_str() {
+            "mp1" => Layer::LayerI,
+            "mp2" => Layer::LayerII,
+            _ => Layer::LayerIII,
+        };
         Ok(Self {
             codec_id: params.codec_id.clone(),
+            expected_layer,
             converter: std::ptr::null_mut(),
             config: None,
             pending: Vec::new(),
@@ -123,30 +138,47 @@ impl Mp3AtDecoder {
         if self.config.is_some() {
             return Ok(());
         }
-        // Reject layers we don't have a registered factory for — the
-        // bridge only registers an `mp3` factory; Layer I and Layer II
-        // streams are not in scope and should fall through to the
-        // pure-Rust pipeline.
-        if header.layer != Layer::LayerIII {
+        // The stream's layer must match the layer this factory was
+        // registered for ("mp1" / "mp2" / "mp3") — a mismatch means
+        // the container mis-labelled the track, and the right decoder
+        // is a *different* registry entry, so surface a typed
+        // Unsupported and let resolution fall through.
+        if header.layer != self.expected_layer {
             return Err(Error::unsupported(format!(
-                "MP3 decoder: only Layer III is supported (got Layer {:?})",
-                header.layer
+                "MPEG-audio decoder ({}): stream is Layer {:?}, factory expects {:?}",
+                self.codec_id.as_str(),
+                header.layer,
+                self.expected_layer
             )));
         }
         let fw = sys::framework()
             .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
         let channels = header.channels();
-        let in_asbd = AudioStreamBasicDescription::mpeg_layer3(
-            header.sample_rate as f64,
-            channels,
-            header.samples_per_frame,
-        );
+        let in_asbd = match header.layer {
+            Layer::LayerI => {
+                AudioStreamBasicDescription::mpeg_layer1(header.sample_rate as f64, channels)
+            }
+            Layer::LayerII => {
+                AudioStreamBasicDescription::mpeg_layer2(header.sample_rate as f64, channels)
+            }
+            Layer::LayerIII => AudioStreamBasicDescription::mpeg_layer3(
+                header.sample_rate as f64,
+                channels,
+                header.samples_per_frame,
+            ),
+        };
         let out_asbd = AudioStreamBasicDescription::pcm_s16(header.sample_rate as f64, channels);
 
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(status_error("AudioConverterNew (MP3 dec)", status));
+            return Err(status_error(
+                &format!(
+                    "AudioConverterNew (MPEG-audio dec, {})",
+                    self.codec_id.as_str()
+                ),
+                status,
+            ));
         }
 
         self.converter = converter;
@@ -490,6 +522,75 @@ mod tests {
         let mut buf = header.to_vec();
         buf.resize(parsed.frame_length, 0);
         buf
+    }
+
+    /// Drive a full decode of synthetic silent frames through the OS
+    /// codec and return (packets sent, PCM frames, PCM samples).
+    fn decode_silence(cid: &str, layer: Layer, br_idx: u8, count: usize) -> (usize, usize, u32) {
+        let mut p = CodecParameters::audio(CodecId::new(cid));
+        p.sample_rate = Some(44_100);
+        p.channels = Some(2);
+        let mut dec = Mp3AtDecoder::new(&p).expect("construct");
+        let mut sent = 0;
+        for i in 0..count {
+            let frame = synth_mp3_frame(Version::Mpeg1, layer, br_idx, 0, false, 0b00);
+            let pkt = Packet::new(i as u32, TimeBase::new(1, 44_100), frame);
+            dec.send_packet(&pkt).expect("send");
+            sent += 1;
+        }
+        dec.flush().expect("flush");
+        let mut frames = 0;
+        let mut samples = 0u32;
+        while let Ok(Frame::Audio(f)) = dec.receive_frame() {
+            frames += 1;
+            samples += f.samples;
+        }
+        (sent, frames, samples)
+    }
+
+    #[test]
+    fn mp1_factory_decodes_layer1_through_the_os_codec() {
+        // 20 synthetic silent MPEG-1 Layer I frames at 44.1 kHz stereo:
+        // Layer I is 384 samples per frame, so full recovery is
+        // 20 × 384 = 7680 PCM samples.
+        let (sent, frames, samples) = decode_silence("mp1", Layer::LayerI, 8, 20);
+        assert_eq!(sent, 20);
+        assert!(frames > 0, "Layer I should produce PCM frames");
+        assert_eq!(samples, 20 * 384, "Layer I is 384 samples per frame");
+    }
+
+    #[test]
+    fn mp2_factory_decodes_layer2_through_the_os_codec() {
+        // Layer II is 1152 samples per frame across every version:
+        // 20 × 1152 = 23040 PCM samples.
+        let (sent, frames, samples) = decode_silence("mp2", Layer::LayerII, 10, 20);
+        assert_eq!(sent, 20);
+        assert!(frames > 0, "Layer II should produce PCM frames");
+        assert_eq!(samples, 20 * 1152, "Layer II is 1152 samples per frame");
+    }
+
+    #[test]
+    fn layer_mismatch_is_typed_unsupported_for_registry_fallthrough() {
+        // An "mp2" factory fed a Layer III stream (and vice versa)
+        // must reject with Unsupported so resolution falls through to
+        // the entry that owns the layer.
+        for (cid, wrong_layer, br_idx) in [
+            ("mp2", Layer::LayerIII, 9u8),
+            ("mp1", Layer::LayerII, 10u8),
+            ("mp3", Layer::LayerI, 8u8),
+        ] {
+            let mut p = CodecParameters::audio(CodecId::new(cid));
+            p.sample_rate = Some(44_100);
+            p.channels = Some(2);
+            let mut dec = Mp3AtDecoder::new(&p).expect("construct");
+            let frame = synth_mp3_frame(Version::Mpeg1, wrong_layer, br_idx, 0, false, 0b00);
+            let pkt = Packet::new(0, TimeBase::new(1, 44_100), frame);
+            let err = dec.send_packet(&pkt).expect_err("layer mismatch must fail");
+            assert!(
+                matches!(err, Error::Unsupported(_)),
+                "{cid} vs {wrong_layer:?}: expected Unsupported, got {err:?}"
+            );
+        }
     }
 
     #[test]

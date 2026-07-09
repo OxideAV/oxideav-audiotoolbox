@@ -145,6 +145,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   presence AND absence per codec id in both directions, and
   `OsInventory` gets its own snapshot/degraded-mode tests.
 
+- **Round 401: MP1 + MP2 decode — the full MPEG-audio family**. The
+  OS inventory lists `'.mp1'` / `'.mp2'` as decodable and the crate's
+  frame-header parser was already layer-complete (per-layer bitrate
+  tables, samples-per-frame, frame-length arithmetic); only an
+  artificial Layer III gate in the bridge blocked them. The
+  MPEG-audio decoder now derives its expected layer from the codec
+  id (`"mp1"` / `"mp2"` / `"mp3"`), builds the matching per-layer
+  ASBD, and rejects a mismatched stream with a typed `Unsupported`
+  so registry resolution falls through to the entry that owns the
+  actual layer. `register()` installs decode-only `mp1` (`'.mp1'`
+  FourCC, `A_MPEG/L1`) and `mp2` (`'.mp2'`, `A_MPEG/L2`,
+  `WAVE_FORMAT_MPEG` 0x0050) factories through the shared bridge,
+  inventory-gated like every other slot. Hardware tests decode 20
+  synthetic silent frames per layer through the OS codec bit-counted
+  to the frame geometry (Layer I: 20 × 384 = 7680 samples; Layer II:
+  20 × 1152 = 23040) and pin the three-way layer-mismatch
+  fallthrough; the registration parity test now covers 10 codec ids.
+
 - **Round 401: converter-property + global AudioFormat sys surface**.
   The `sys` module grows the introspection half of the AudioConverter
   property set — buffer sizing (`'mobs'` / `'cibs'` / `'cobs'`),
