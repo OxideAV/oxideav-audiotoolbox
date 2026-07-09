@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round 401: typed `OSStatus` error taxonomy (`status` module)**.
+  Every CoreAudio failure code the bridge can encounter now has a
+  typed home instead of surfacing as a bare integer in an error
+  string. `AtStatus::from_raw` classifies all 29 documented codes from
+  the platform SDK's `AudioConverter.h` / `AudioCodec.h` /
+  `AudioFormat.h` / `CoreAudioBaseTypes.h` error enums (with an
+  `Unknown(raw)` tail-case so classification is total and
+  `from_raw(s).as_raw() == s` always); `name()` recovers the platform
+  constant name; `kind()` buckets each code into the coarse semantics
+  a caller acts on (`Unsupported` / `InvalidData` /
+  `ResourceExhausted` / `Usage` / `Other`); and the `Display` impl
+  renders `name ('fourcc' / raw)` so logs carry both the human name
+  and the greppable integer (the historically inscrutable
+  `1650549857` now reads `kAudioCodecBadDataError ('bada' /
+  1650549857)`). Behind the `registry` feature, `status_error(op,
+  raw)` converts an operation + status pair straight into the
+  matching `oxideav_core::Error` variant — `'fmt?'` → `Unsupported`
+  (registry falls back to the pure-Rust impl), `'bada'` →
+  `InvalidData`, `'hwiu'` / `'!buf'` / `-108` → `ResourceExhausted`.
+  7 unit tests pin the full raw↔variant↔name↔kind table, value
+  distinctness, Display rendering, and the core-error mapping.
+
+- **Round 401: converter-property + global AudioFormat sys surface**.
+  The `sys` module grows the introspection half of the AudioConverter
+  property set — buffer sizing (`'mobs'` / `'cibs'` / `'cobs'`),
+  current input/output stream descriptions (`'acsd'` / `'acod'`),
+  applicable/available encode bit-rate and sample-rate queries
+  (`'aebr'` / `'vebr'` / `'aesr'` / `'vesr'`), edge-priming control
+  and introspection (`'prmm'` prime method with its Pre / Normal /
+  None values, `'prim'` prime info), and the two quality selectors
+  (`'srcq'` / `'cdqu'` with the five Max…Min values) — plus the two
+  C ABI structs those properties traffic in (`AudioValueRange` with
+  `is_discrete` / `contains`, `AudioConverterPrimeInfo` whose
+  `leading_frames` is the AAC encoder-delay/priming figure) and the
+  *global* converter-less AudioFormat query surface:
+  `audio_format_get_property_info` / `audio_format_get_property`
+  bindings with the `'fmti'` / `'acof'` / `'acdf'` / `'aebr'` /
+  `'aesr'` / `'fvbr'` / `'fexf'` property IDs. 5 new tests pin every
+  FourCC byte-for-byte, the predicate behaviour, the C struct sizes
+  (16 / 8 / 40 / 16 bytes), and that both AudioFormat entry points
+  resolve from the real framework.
+
 - **Round 319: `AudioFormatId` family / codec-id / FourCC accessors**
   (sys-surface introspection). Round 265 added the typed `AudioFormatId`
   classifier and its `is_linear_pcm` / `is_compressed_audio` predicates.

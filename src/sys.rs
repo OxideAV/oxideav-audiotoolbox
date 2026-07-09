@@ -134,8 +134,85 @@ pub const K_AUDIO_CONVERTER_ENCODE_BIT_RATE: u32 = 0x62726174; // 'brat'
 /// kAudioConverterPropertyMaximumOutputPacketSize
 pub const K_AUDIO_CONVERTER_MAX_OUTPUT_PACKET_SIZE: u32 = 0x786F7073; // 'xops'
 
+/// kAudioConverterPropertyMinimumOutputBufferSize — the smallest
+/// output-buffer byte count `FillComplexBuffer` will accept.
+pub const K_AUDIO_CONVERTER_MIN_OUTPUT_BUFFER_SIZE: u32 = 0x6D6F6273; // 'mobs'
+
+/// kAudioConverterPropertyCalculateInputBufferSize — pass the desired
+/// output byte count in, read back the input byte count needed.
+pub const K_AUDIO_CONVERTER_CALCULATE_INPUT_BUFFER_SIZE: u32 = 0x63696273; // 'cibs'
+
+/// kAudioConverterPropertyCalculateOutputBufferSize — pass the input
+/// byte count in, read back the output byte count it will produce.
+pub const K_AUDIO_CONVERTER_CALCULATE_OUTPUT_BUFFER_SIZE: u32 = 0x636F6273; // 'cobs'
+
 /// kAudioConverterCurrentInputStreamDescription
 pub const K_AUDIO_CONVERTER_CURRENT_INPUT_SD: u32 = 0x61637364; // 'acsd'
+
+/// kAudioConverterCurrentOutputStreamDescription
+pub const K_AUDIO_CONVERTER_CURRENT_OUTPUT_SD: u32 = 0x61636F64; // 'acod'
+
+/// kAudioConverterApplicableEncodeBitRates — the encode bit rates
+/// applicable to the converter's *current* configuration, as an array
+/// of [`AudioValueRange`] (min == max for discrete rates).
+pub const K_AUDIO_CONVERTER_APPLICABLE_ENCODE_BIT_RATES: u32 = 0x61656272; // 'aebr'
+
+/// kAudioConverterAvailableEncodeBitRates — every encode bit rate the
+/// converter's destination format supports across configurations, as
+/// an array of [`AudioValueRange`].
+pub const K_AUDIO_CONVERTER_AVAILABLE_ENCODE_BIT_RATES: u32 = 0x76656272; // 'vebr'
+
+/// kAudioConverterApplicableEncodeSampleRates — the encode sample
+/// rates applicable to the current configuration, as an array of
+/// [`AudioValueRange`].
+pub const K_AUDIO_CONVERTER_APPLICABLE_ENCODE_SAMPLE_RATES: u32 = 0x61657372; // 'aesr'
+
+/// kAudioConverterAvailableEncodeSampleRates — every encode sample
+/// rate the destination format supports, as an array of
+/// [`AudioValueRange`].
+pub const K_AUDIO_CONVERTER_AVAILABLE_ENCODE_SAMPLE_RATES: u32 = 0x76657372; // 'vesr'
+
+/// kAudioConverterPrimeMethod — how the converter primes its head /
+/// tail at the stream edges. Value is a `u32`, one of
+/// [`K_CONVERTER_PRIME_METHOD_PRE`] / [`K_CONVERTER_PRIME_METHOD_NORMAL`]
+/// / [`K_CONVERTER_PRIME_METHOD_NONE`].
+pub const K_AUDIO_CONVERTER_PRIME_METHOD: u32 = 0x70726D6D; // 'prmm'
+
+/// kAudioConverterPrimeInfo — the converter's leading / trailing frame
+/// requirements ([`AudioConverterPrimeInfo`]). For an AAC encode
+/// converter the `leading_frames` value is the encoder delay
+/// downstream muxers account for as priming samples.
+pub const K_AUDIO_CONVERTER_PRIME_INFO: u32 = 0x7072696D; // 'prim'
+
+/// kAudioConverterSampleRateConverterQuality — `u32`, one of the
+/// `K_AUDIO_CONVERTER_QUALITY_*` values.
+pub const K_AUDIO_CONVERTER_SAMPLE_RATE_CONVERTER_QUALITY: u32 = 0x73726371; // 'srcq'
+
+/// kAudioConverterCodecQuality — `u32`, one of the
+/// `K_AUDIO_CONVERTER_QUALITY_*` values.
+pub const K_AUDIO_CONVERTER_CODEC_QUALITY: u32 = 0x63647175; // 'cdqu'
+
+/// kConverterPrimeMethod_Pre — primes with leading + trailing input
+/// frames (the input callback is expected to supply data "before" the
+/// nominal stream start).
+pub const K_CONVERTER_PRIME_METHOD_PRE: u32 = 0;
+/// kConverterPrimeMethod_Normal — primes with only trailing input
+/// frames; leading frames are assumed silent.
+pub const K_CONVERTER_PRIME_METHOD_NORMAL: u32 = 1;
+/// kConverterPrimeMethod_None — acts as if the stream is contiguous
+/// with earlier data; no edge priming at all.
+pub const K_CONVERTER_PRIME_METHOD_NONE: u32 = 2;
+
+/// kAudioConverterQuality_Max (0x7F).
+pub const K_AUDIO_CONVERTER_QUALITY_MAX: u32 = 0x7F;
+/// kAudioConverterQuality_High (0x60).
+pub const K_AUDIO_CONVERTER_QUALITY_HIGH: u32 = 0x60;
+/// kAudioConverterQuality_Medium (0x40).
+pub const K_AUDIO_CONVERTER_QUALITY_MEDIUM: u32 = 0x40;
+/// kAudioConverterQuality_Low (0x20).
+pub const K_AUDIO_CONVERTER_QUALITY_LOW: u32 = 0x20;
+/// kAudioConverterQuality_Min (0).
+pub const K_AUDIO_CONVERTER_QUALITY_MIN: u32 = 0;
 
 /// kAudioConverterDecompressionMagicCookie — set on a decoder converter
 /// before its first decode call.
@@ -145,6 +222,43 @@ pub const K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE: u32 = 0x646D6763; // 'dm
 /// after it has been configured. The value is the encoder-vended magic
 /// cookie (for ALAC: 24 or 48 bytes).
 pub const K_AUDIO_CONVERTER_COMPRESSION_MAGIC_COOKIE: u32 = 0x636D6763; // 'cmgc'
+
+// ─────────────────── AudioFormat API (global) property IDs ──────────────────
+//
+// These select values for `AudioFormatGetProperty` /
+// `AudioFormatGetPropertyInfo` — the *global* (converter-less) query
+// surface the framework exposes for asking "what can this system's
+// codec set do" before any converter exists.
+
+/// kAudioFormatProperty_FormatInfo — pass a partially-filled ASBD as
+/// the specifier and the framework completes the missing fields.
+pub const K_AUDIO_FORMAT_PROPERTY_FORMAT_INFO: u32 = 0x666D7469; // 'fmti'
+
+/// kAudioFormatProperty_EncodeFormatIDs — no specifier; returns the
+/// array of `u32` format IDs the system can encode **to**.
+pub const K_AUDIO_FORMAT_PROPERTY_ENCODE_FORMAT_IDS: u32 = 0x61636F66; // 'acof'
+
+/// kAudioFormatProperty_DecodeFormatIDs — no specifier; returns the
+/// array of `u32` format IDs the system can decode **from**.
+pub const K_AUDIO_FORMAT_PROPERTY_DECODE_FORMAT_IDS: u32 = 0x61636466; // 'acdf'
+
+/// kAudioFormatProperty_AvailableEncodeBitRates — specifier is a
+/// `u32` format ID; returns an array of [`AudioValueRange`].
+pub const K_AUDIO_FORMAT_PROPERTY_AVAILABLE_ENCODE_BIT_RATES: u32 = 0x61656272; // 'aebr'
+
+/// kAudioFormatProperty_AvailableEncodeSampleRates — specifier is a
+/// `u32` format ID; returns an array of [`AudioValueRange`].
+pub const K_AUDIO_FORMAT_PROPERTY_AVAILABLE_ENCODE_SAMPLE_RATES: u32 = 0x61657372; // 'aesr'
+
+/// kAudioFormatProperty_FormatIsVBR — specifier is an ASBD; returns a
+/// `u32` boolean: the format's packets vary in size.
+pub const K_AUDIO_FORMAT_PROPERTY_FORMAT_IS_VBR: u32 = 0x66766272; // 'fvbr'
+
+/// kAudioFormatProperty_FormatIsExternallyFramed — specifier is an
+/// ASBD; returns a `u32` boolean: packet boundaries cannot be
+/// recovered from the byte stream alone, so transport must carry
+/// `AudioStreamPacketDescription`s.
+pub const K_AUDIO_FORMAT_PROPERTY_FORMAT_IS_EXTERNALLY_FRAMED: u32 = 0x66657866; // 'fexf'
 
 /// Typed classification of the `AudioStreamBasicDescription::format_id`
 /// field across every codec slot this bridge wires.
@@ -847,6 +961,46 @@ pub struct AudioStreamPacketDescription {
     pub data_byte_size: u32,
 }
 
+/// AudioValueRange — a continuous `[minimum, maximum]` span of f64
+/// values. The framework's "available/applicable bit rates / sample
+/// rates" properties return arrays of these; a discrete value is
+/// encoded as `minimum == maximum`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AudioValueRange {
+    pub minimum: f64,
+    pub maximum: f64,
+}
+
+impl AudioValueRange {
+    /// `true` when the range encodes a single discrete value
+    /// (`minimum == maximum`).
+    pub fn is_discrete(&self) -> bool {
+        self.minimum == self.maximum
+    }
+
+    /// `true` when `v` falls within the (inclusive) range.
+    pub fn contains(&self, v: f64) -> bool {
+        v >= self.minimum && v <= self.maximum
+    }
+}
+
+/// AudioConverterPrimeInfo — the converter's edge-priming frame
+/// counts, read via [`K_AUDIO_CONVERTER_PRIME_INFO`].
+///
+/// `leading_frames` is the number of input frames the converter needs
+/// *before* the nominal stream start to produce its first correct
+/// output frame; for an AAC **encode** converter this is the encoder
+/// delay (priming samples) that container formats record so players
+/// can trim it. `trailing_frames` is the look-ahead needed past the
+/// stream end to flush the final output.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AudioConverterPrimeInfo {
+    pub leading_frames: u32,
+    pub trailing_frames: u32,
+}
+
 // ─────────────────────────────── Framework ───────────────────────────────
 
 /// Handles to the frameworks the AT bridge needs.
@@ -1048,6 +1202,69 @@ pub unsafe fn audio_converter_fill_complex_buffer(
     )
 }
 
+/// Thin wrapper for `AudioFormatGetPropertyInfo` — the *global*
+/// (converter-less) query surface. Reports the byte size of the value
+/// `AudioFormatGetProperty` would return for the same
+/// `(property, specifier)` pair.
+///
+/// # Safety
+/// `in_specifier` must point to `in_specifier_size` valid bytes of the
+/// specifier type the property documents (or be null with size 0 for
+/// specifier-less properties).
+pub unsafe fn audio_format_get_property_info(
+    fw: &Framework,
+    in_property_id: u32,
+    in_specifier_size: u32,
+    in_specifier: *const std::ffi::c_void,
+    out_property_data_size: *mut u32,
+) -> OSStatus {
+    type Fn = unsafe extern "C" fn(u32, u32, *const std::ffi::c_void, *mut u32) -> OSStatus;
+    let f: libloading::Symbol<Fn> = fw
+        .audio_toolbox
+        .get(b"AudioFormatGetPropertyInfo\0")
+        .expect("AudioFormatGetPropertyInfo not found");
+    f(
+        in_property_id,
+        in_specifier_size,
+        in_specifier,
+        out_property_data_size,
+    )
+}
+
+/// Thin wrapper for `AudioFormatGetProperty`.
+///
+/// # Safety
+/// `in_specifier` as for [`audio_format_get_property_info`];
+/// `out_property_data` must point to `*io_property_data_size` valid
+/// bytes, and the size is updated to the bytes actually written.
+pub unsafe fn audio_format_get_property(
+    fw: &Framework,
+    in_property_id: u32,
+    in_specifier_size: u32,
+    in_specifier: *const std::ffi::c_void,
+    io_property_data_size: *mut u32,
+    out_property_data: *mut std::ffi::c_void,
+) -> OSStatus {
+    type Fn = unsafe extern "C" fn(
+        u32,
+        u32,
+        *const std::ffi::c_void,
+        *mut u32,
+        *mut std::ffi::c_void,
+    ) -> OSStatus;
+    let f: libloading::Symbol<Fn> = fw
+        .audio_toolbox
+        .get(b"AudioFormatGetProperty\0")
+        .expect("AudioFormatGetProperty not found");
+    f(
+        in_property_id,
+        in_specifier_size,
+        in_specifier,
+        io_property_data_size,
+        out_property_data,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,6 +1283,106 @@ mod tests {
             fw.core_foundation
                 .get(b"CFRetain\0")
                 .expect("CFRetain symbol")
+        };
+    }
+
+    #[test]
+    fn converter_property_fourcc_values() {
+        // Spell out the FourCC byte mapping of every converter
+        // property selector so a typo can't slip through.
+        assert_eq!(K_AUDIO_CONVERTER_ENCODE_BIT_RATE, be(b"brat"));
+        assert_eq!(K_AUDIO_CONVERTER_MAX_OUTPUT_PACKET_SIZE, be(b"xops"));
+        assert_eq!(K_AUDIO_CONVERTER_MIN_OUTPUT_BUFFER_SIZE, be(b"mobs"));
+        assert_eq!(K_AUDIO_CONVERTER_CALCULATE_INPUT_BUFFER_SIZE, be(b"cibs"));
+        assert_eq!(K_AUDIO_CONVERTER_CALCULATE_OUTPUT_BUFFER_SIZE, be(b"cobs"));
+        assert_eq!(K_AUDIO_CONVERTER_CURRENT_INPUT_SD, be(b"acsd"));
+        assert_eq!(K_AUDIO_CONVERTER_CURRENT_OUTPUT_SD, be(b"acod"));
+        assert_eq!(K_AUDIO_CONVERTER_APPLICABLE_ENCODE_BIT_RATES, be(b"aebr"));
+        assert_eq!(K_AUDIO_CONVERTER_AVAILABLE_ENCODE_BIT_RATES, be(b"vebr"));
+        assert_eq!(
+            K_AUDIO_CONVERTER_APPLICABLE_ENCODE_SAMPLE_RATES,
+            be(b"aesr")
+        );
+        assert_eq!(K_AUDIO_CONVERTER_AVAILABLE_ENCODE_SAMPLE_RATES, be(b"vesr"));
+        assert_eq!(K_AUDIO_CONVERTER_PRIME_METHOD, be(b"prmm"));
+        assert_eq!(K_AUDIO_CONVERTER_PRIME_INFO, be(b"prim"));
+        assert_eq!(K_AUDIO_CONVERTER_SAMPLE_RATE_CONVERTER_QUALITY, be(b"srcq"));
+        assert_eq!(K_AUDIO_CONVERTER_CODEC_QUALITY, be(b"cdqu"));
+        assert_eq!(K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE, be(b"dmgc"));
+        assert_eq!(K_AUDIO_CONVERTER_COMPRESSION_MAGIC_COOKIE, be(b"cmgc"));
+    }
+
+    #[test]
+    fn format_property_fourcc_values() {
+        assert_eq!(K_AUDIO_FORMAT_PROPERTY_FORMAT_INFO, be(b"fmti"));
+        assert_eq!(K_AUDIO_FORMAT_PROPERTY_ENCODE_FORMAT_IDS, be(b"acof"));
+        assert_eq!(K_AUDIO_FORMAT_PROPERTY_DECODE_FORMAT_IDS, be(b"acdf"));
+        assert_eq!(
+            K_AUDIO_FORMAT_PROPERTY_AVAILABLE_ENCODE_BIT_RATES,
+            be(b"aebr")
+        );
+        assert_eq!(
+            K_AUDIO_FORMAT_PROPERTY_AVAILABLE_ENCODE_SAMPLE_RATES,
+            be(b"aesr")
+        );
+        assert_eq!(K_AUDIO_FORMAT_PROPERTY_FORMAT_IS_VBR, be(b"fvbr"));
+        assert_eq!(
+            K_AUDIO_FORMAT_PROPERTY_FORMAT_IS_EXTERNALLY_FRAMED,
+            be(b"fexf")
+        );
+    }
+
+    fn be(tag: &[u8; 4]) -> u32 {
+        u32::from_be_bytes(*tag)
+    }
+
+    #[test]
+    fn audio_value_range_predicates() {
+        let discrete = AudioValueRange {
+            minimum: 44_100.0,
+            maximum: 44_100.0,
+        };
+        assert!(discrete.is_discrete());
+        assert!(discrete.contains(44_100.0));
+        assert!(!discrete.contains(48_000.0));
+
+        let span = AudioValueRange {
+            minimum: 8_000.0,
+            maximum: 48_000.0,
+        };
+        assert!(!span.is_discrete());
+        assert!(span.contains(8_000.0));
+        assert!(span.contains(48_000.0));
+        assert!(span.contains(22_050.0));
+        assert!(!span.contains(96_000.0));
+    }
+
+    #[test]
+    fn abi_struct_sizes_match_coreaudio_layout() {
+        // The C ABI structs must match the framework's expectations
+        // byte for byte: AudioValueRange is two f64s (16),
+        // AudioConverterPrimeInfo two u32s (8), and the ASBD is the
+        // canonical 40-byte CoreAudio descriptor.
+        assert_eq!(std::mem::size_of::<AudioValueRange>(), 16);
+        assert_eq!(std::mem::size_of::<AudioConverterPrimeInfo>(), 8);
+        assert_eq!(std::mem::size_of::<AudioStreamBasicDescription>(), 40);
+        assert_eq!(std::mem::size_of::<AudioStreamPacketDescription>(), 16);
+    }
+
+    #[test]
+    fn frameworks_resolve_audio_format_entry_points() {
+        // The global AudioFormat query surface must resolve alongside
+        // the converter entry points.
+        let fw = framework().expect("framework load");
+        let _: libloading::Symbol<unsafe extern "C" fn()> = unsafe {
+            fw.audio_toolbox
+                .get(b"AudioFormatGetProperty\0")
+                .expect("AudioFormatGetProperty symbol")
+        };
+        let _: libloading::Symbol<unsafe extern "C" fn()> = unsafe {
+            fw.audio_toolbox
+                .get(b"AudioFormatGetPropertyInfo\0")
+                .expect("AudioFormatGetPropertyInfo symbol")
         };
     }
 
