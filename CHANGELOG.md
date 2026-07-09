@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Round 401: every `OSStatus` failure site routed through the typed
+  taxonomy** (13 codec modules, 38 sites). All
+  `Error::other(format!("... failed: OSStatus {status}"))` sites in
+  the AAC / ALAC / AMR-NB / AMR-WB / FLAC / iLBC / MP3 / Opus
+  decoders and encoders now call `status::status_error(op, status)`,
+  so failures carry the decoded platform-constant name and FourCC
+  and map onto the semantically-correct `oxideav_core::Error`
+  variant: converter-creation format rejections become
+  `Unsupported` (the registry falls back to the pure-Rust impl
+  instead of aborting on an opaque `Other`), bad-bitstream `'bada'`
+  becomes `InvalidData`, and hardware/buffer/memory exhaustion
+  becomes `ResourceExhausted`. The 28 framework-unavailable sites
+  move from `Error::Other` to `Error::Unsupported` for the same
+  fallback reason. Full suite (lib + 12 hardware round-trip
+  integration tests) re-run green against the real framework.
+
 ### Added
 
 - **Round 401: typed `OSStatus` error taxonomy (`status` module)**.

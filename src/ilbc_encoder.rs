@@ -21,6 +21,7 @@ use oxideav_core::Encoder;
 use oxideav_core::{CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 
 use crate::ilbc::IlbcMode;
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, NO_ERR,
@@ -58,8 +59,8 @@ unsafe impl Send for IlbcAtEncoder {}
 
 impl IlbcAtEncoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         // iLBC is fixed at 8 kHz mono. Reject anything else early —
         // AudioConverterNew would refuse it anyway, but a typed error
@@ -90,9 +91,10 @@ impl IlbcAtEncoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (iLBC enc, mode={mode:?}) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                &format!("AudioConverterNew (iLBC enc, mode={mode:?})"),
+                status,
+            ));
         }
 
         let time_base = TimeBase::new(1, 8_000);
@@ -133,8 +135,8 @@ impl IlbcAtEncoder {
 
     /// Single `FillComplexBuffer` call producing one fixed-size iLBC packet.
     fn encode_one(&mut self, pcm: &[u8]) -> Result<()> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let out_size = self.mode.bytes_per_packet() as usize;
         let mut out_buf = vec![0u8; out_size];
@@ -169,9 +171,10 @@ impl IlbcAtEncoder {
             )
         };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (iLBC enc) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (iLBC enc)",
+                status,
+            ));
         }
 
         let raw_len = abl.buffers[0].data_byte_size as usize;

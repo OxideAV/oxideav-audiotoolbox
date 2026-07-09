@@ -36,6 +36,7 @@ use oxideav_core::Decoder;
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 
 use crate::opus::{OpusHead, DEFAULT_FRAMES_PER_PACKET_48K, HEAD_LEN_FAMILY_0};
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE, NO_ERR,
@@ -76,8 +77,8 @@ unsafe impl Send for OpusAtDecoder {}
 
 impl OpusAtDecoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let head = resolve_head(params)?;
         if head.mapping_family != 0 {
@@ -123,9 +124,7 @@ impl OpusAtDecoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (Opus dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error("AudioConverterNew (Opus dec)", status));
         }
 
         let cookie = head.to_bytes();
@@ -142,9 +141,10 @@ impl OpusAtDecoder {
             unsafe {
                 let _ = sys::audio_converter_dispose(fw, converter);
             }
-            return Err(Error::other(format!(
-                "AudioConverterSetProperty(DecompressionMagicCookie / Opus) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterSetProperty(DecompressionMagicCookie / Opus)",
+                status,
+            ));
         }
 
         // Worst-case PCM block: 60 ms frame at the configured rate.
@@ -222,8 +222,8 @@ impl OpusAtDecoder {
     /// Single `FillComplexBuffer` call asking for one frame's worth of
     /// PCM. Returns `true` if a frame was produced.
     fn pull_one_pcm_frame(&mut self) -> Result<bool> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let channels = self.head.channels as usize;
         let mut pcm_buf = vec![0u8; self.max_pcm_bytes];
@@ -271,9 +271,10 @@ impl OpusAtDecoder {
         self.input_queue = std::mem::take(&mut ctx.queue);
 
         if status != NO_ERR && status != 1 {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (Opus dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (Opus dec)",
+                status,
+            ));
         }
 
         let actual_bytes = abl.buffers[0].data_byte_size as usize;

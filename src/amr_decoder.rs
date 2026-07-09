@@ -32,6 +32,7 @@ use oxideav_core::Decoder;
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 
 use crate::amr::{self, FrameType};
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, NO_ERR,
@@ -75,8 +76,8 @@ unsafe impl Send for AmrNbAtDecoder {}
 
 impl AmrNbAtDecoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         // AMR-NB is fixed at 8 kHz mono. Reject anything else early —
         // AudioConverterNew would refuse it anyway, but a typed error
@@ -102,9 +103,7 @@ impl AmrNbAtDecoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (AMR-NB dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error("AudioConverterNew (AMR-NB dec)", status));
         }
 
         Ok(Self {
@@ -159,8 +158,8 @@ impl AmrNbAtDecoder {
     /// Single `FillComplexBuffer` call asking for one packet's worth of
     /// PCM. Returns `true` if a frame was produced.
     fn pull_one_pcm_frame(&mut self) -> Result<bool> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let frames_per_packet = amr::FRAMES_PER_PACKET as usize;
         let buf_size = frames_per_packet * 2; // mono S16
@@ -198,9 +197,10 @@ impl AmrNbAtDecoder {
         self.input_queue = std::mem::take(&mut ctx.queue);
 
         if status != NO_ERR && status != 1 {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (AMR-NB dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (AMR-NB dec)",
+                status,
+            ));
         }
 
         let actual_bytes = abl.buffers[0].data_byte_size as usize;

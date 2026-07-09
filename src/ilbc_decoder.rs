@@ -26,6 +26,7 @@ use oxideav_core::Decoder;
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 
 use crate::ilbc::IlbcMode;
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, NO_ERR,
@@ -69,8 +70,8 @@ unsafe impl Send for IlbcAtDecoder {}
 
 impl IlbcAtDecoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         // iLBC is fixed at 8 kHz mono. The only configurable knob is the
         // mode (20 vs 30 ms). Sample-rate / channel parameters from the
@@ -100,9 +101,10 @@ impl IlbcAtDecoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (iLBC dec, mode={mode:?}) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                &format!("AudioConverterNew (iLBC dec, mode={mode:?})"),
+                status,
+            ));
         }
 
         Ok(Self {
@@ -156,8 +158,8 @@ impl IlbcAtDecoder {
     /// Single `FillComplexBuffer` call asking for one packet's worth of
     /// PCM. Returns `true` if a frame was produced.
     fn pull_one_pcm_frame(&mut self) -> Result<bool> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let frames_per_packet = self.mode.frames_per_packet() as usize;
         let buf_size = frames_per_packet * 2; // mono S16
@@ -196,9 +198,10 @@ impl IlbcAtDecoder {
         self.input_queue = std::mem::take(&mut ctx.queue);
 
         if status != NO_ERR && status != 1 {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (iLBC dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (iLBC dec)",
+                status,
+            ));
         }
 
         let actual_bytes = abl.buffers[0].data_byte_size as usize;

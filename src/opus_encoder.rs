@@ -42,6 +42,7 @@ use oxideav_core::{
 };
 
 use crate::opus::{self, OpusHead, DEFAULT_FRAME_DURATION_MS, DEFAULT_PRE_SKIP};
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, K_AUDIO_CONVERTER_COMPRESSION_MAGIC_COOKIE,
@@ -101,8 +102,8 @@ unsafe impl Send for OpusAtEncoder {}
 
 impl OpusAtEncoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let sr = params.sample_rate.unwrap_or(48_000);
         validate_input_rate(sr)?;
@@ -152,9 +153,7 @@ impl OpusAtEncoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (Opus enc) failed: OSStatus {status}"
-            )));
+            return Err(status_error("AudioConverterNew (Opus enc)", status));
         }
 
         // Configure the target bit-rate. AT quantises to its own grid;
@@ -283,8 +282,8 @@ impl OpusAtEncoder {
     }
 
     fn pump_one_packet(&mut self) -> Result<()> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let out_size = self.max_packet_bytes as usize;
         let mut out_buf = vec![0u8; out_size];
@@ -312,9 +311,10 @@ impl OpusAtEncoder {
             )
         };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (Opus enc) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (Opus enc)",
+                status,
+            ));
         }
 
         let raw_len = abl.buffers[0].data_byte_size as usize;
@@ -417,9 +417,10 @@ fn read_compression_cookie(fw: &sys::Framework, converter: AudioConverterRef) ->
         )
     };
     if status != NO_ERR || size == 0 {
-        return Err(Error::other(format!(
-            "GetPropertyInfo(CompressionMagicCookie / Opus) failed: OSStatus {status}, size {size}"
-        )));
+        return Err(status_error(
+            &format!("GetPropertyInfo(CompressionMagicCookie / Opus) (size {size})"),
+            status,
+        ));
     }
 
     let mut buf = vec![0u8; size as usize];
@@ -434,9 +435,10 @@ fn read_compression_cookie(fw: &sys::Framework, converter: AudioConverterRef) ->
         )
     };
     if status != NO_ERR {
-        return Err(Error::other(format!(
-            "GetProperty(CompressionMagicCookie / Opus) failed: OSStatus {status}"
-        )));
+        return Err(status_error(
+            "GetProperty(CompressionMagicCookie / Opus)",
+            status,
+        ));
     }
     buf.truncate(io_size as usize);
     Ok(buf)

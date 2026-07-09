@@ -36,6 +36,7 @@ use oxideav_core::Decoder;
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 
 use crate::mp3::{ChannelMode, FrameHeader, Layer, Version};
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, NO_ERR,
@@ -132,8 +133,8 @@ impl Mp3AtDecoder {
                 header.layer
             )));
         }
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
         let channels = header.channels();
         let in_asbd = AudioStreamBasicDescription::mpeg_layer3(
             header.sample_rate as f64,
@@ -145,9 +146,7 @@ impl Mp3AtDecoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (MP3 dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error("AudioConverterNew (MP3 dec)", status));
         }
 
         self.converter = converter;
@@ -251,8 +250,8 @@ impl Mp3AtDecoder {
     /// PCM. Returns `true` if a frame was produced.
     fn pull_one_pcm_frame(&mut self) -> Result<bool> {
         let cfg = self.config.as_ref().expect("configured");
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let frames_per_packet = cfg.samples_per_frame as usize;
         let channels = cfg.channels as usize;
@@ -291,9 +290,10 @@ impl Mp3AtDecoder {
         self.input_queue = std::mem::take(&mut ctx.queue);
 
         if status != NO_ERR && status != 1 {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (MP3 dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (MP3 dec)",
+                status,
+            ));
         }
 
         let actual_bytes = abl.buffers[0].data_byte_size as usize;

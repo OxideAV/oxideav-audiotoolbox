@@ -14,6 +14,7 @@ use oxideav_core::{
 };
 
 use crate::adts;
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, K_AUDIO_CONVERTER_COMPRESSION_MAGIC_COOKIE,
@@ -151,8 +152,8 @@ unsafe impl Send for AacAtEncoder {}
 
 impl AacAtEncoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let profile = AacProfile::parse(params.options.get("profile"));
 
@@ -221,9 +222,10 @@ impl AacAtEncoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (encoder, profile={profile:?}) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                &format!("AudioConverterNew (encoder, profile={profile:?})"),
+                status,
+            ));
         }
 
         // Set target bitrate.
@@ -413,8 +415,8 @@ impl AacAtEncoder {
     ///   most decoders would mis-decode. The encoder publishes the
     ///   cookie via `output_params.extradata` for downstream use.
     fn encode_one_with_ctx(&mut self, ctx: &mut PcmContext) -> Result<()> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let prefix = if self.profile.is_raw() { 0 } else { 7 };
         let out_size = self.max_packet_bytes as usize;
@@ -444,9 +446,10 @@ impl AacAtEncoder {
             )
         };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (encoder) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (encoder)",
+                status,
+            ));
         }
 
         let raw_len = abl.buffers[0].data_byte_size as usize;
@@ -477,8 +480,8 @@ impl AacAtEncoder {
     /// analysis can hold up to ~4 packets of PCM before emitting).
     /// Pushes 0 or 1 packet onto `self.pending`.
     fn encode_drain_packet(&mut self) -> Result<()> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let prefix = if self.profile.is_raw() { 0 } else { 7 };
         let out_size = self.max_packet_bytes as usize;
@@ -711,9 +714,10 @@ fn read_compression_cookie(fw: &sys::Framework, converter: AudioConverterRef) ->
         )
     };
     if status != NO_ERR || size == 0 {
-        return Err(Error::other(format!(
-            "GetPropertyInfo(CompressionMagicCookie) failed: OSStatus {status}, size {size}"
-        )));
+        return Err(status_error(
+            &format!("GetPropertyInfo(CompressionMagicCookie) (size {size})"),
+            status,
+        ));
     }
     let mut buf = vec![0u8; size as usize];
     let mut io_size = size;
@@ -727,9 +731,7 @@ fn read_compression_cookie(fw: &sys::Framework, converter: AudioConverterRef) ->
         )
     };
     if status != NO_ERR {
-        return Err(Error::other(format!(
-            "GetProperty(CompressionMagicCookie) failed: OSStatus {status}"
-        )));
+        return Err(status_error("GetProperty(CompressionMagicCookie)", status));
     }
     buf.truncate(io_size as usize);
     Ok(buf)

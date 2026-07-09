@@ -25,6 +25,7 @@ use oxideav_core::{
 };
 
 use crate::alac::{self, AlacSpecificConfig};
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE, NO_ERR,
@@ -75,8 +76,8 @@ unsafe impl Send for AlacAtDecoder {}
 
 impl AlacAtDecoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         // Resolve cookie + cfg.
         let (cookie, cfg) = if params.extradata.len() >= alac::SPECIFIC_CONFIG_LEN {
@@ -152,9 +153,7 @@ impl AlacAtDecoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (ALAC dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error("AudioConverterNew (ALAC dec)", status));
         }
 
         // Wire up the magic cookie.
@@ -171,9 +170,10 @@ impl AlacAtDecoder {
             unsafe {
                 let _ = sys::audio_converter_dispose(fw, converter);
             }
-            return Err(Error::other(format!(
-                "AudioConverterSetProperty(DecompressionMagicCookie) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterSetProperty(DecompressionMagicCookie)",
+                status,
+            ));
         }
 
         Ok(Self {
@@ -196,8 +196,8 @@ impl AlacAtDecoder {
         if data.is_empty() {
             return Ok(());
         }
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let channels = self.channels as usize;
         let frames_per_packet = self.cfg.frame_length as usize;
@@ -241,9 +241,10 @@ impl AlacAtDecoder {
         };
 
         if status != NO_ERR && status != 1 {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (ALAC dec) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (ALAC dec)",
+                status,
+            ));
         }
 
         let actual_bytes = abl.buffers[0].data_byte_size as usize;

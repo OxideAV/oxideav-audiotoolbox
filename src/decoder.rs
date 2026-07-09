@@ -16,6 +16,7 @@ use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, R
 use crate::adts;
 use crate::adts::SAMPLE_RATES;
 use crate::encoder::AacProfile;
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, K_AUDIO_CONVERTER_DECOMPRESSION_MAGIC_COOKIE, NO_ERR,
@@ -141,8 +142,8 @@ impl AacAtDecoder {
     }
 
     fn configure_inner(&mut self, sr: u32, ch: u32) -> Result<()> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         self.sample_rate = sr;
         self.channels = ch as u16;
@@ -178,10 +179,10 @@ impl AacAtDecoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (profile={:?}) failed: OSStatus {status}",
-                self.profile
-            )));
+            return Err(status_error(
+                &format!("AudioConverterNew (profile={:?})", self.profile),
+                status,
+            ));
         }
 
         // Forward the magic cookie if the caller supplied one. For HE
@@ -203,9 +204,10 @@ impl AacAtDecoder {
                 unsafe {
                     let _ = sys::audio_converter_dispose(fw, converter);
                 }
-                return Err(Error::other(format!(
-                    "AudioConverterSetProperty(DecompressionMagicCookie) failed: OSStatus {status}"
-                )));
+                return Err(status_error(
+                    "AudioConverterSetProperty(DecompressionMagicCookie)",
+                    status,
+                ));
             }
         }
 
@@ -280,8 +282,8 @@ impl AacAtDecoder {
     /// worth of PCM. Returns `true` if a frame was produced and pushed
     /// onto `self.pending`.
     fn pull_one_pcm_frame(&mut self) -> Result<bool> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let channels = self.channels as usize;
         let sample_count = self.profile.frames_per_packet() as usize;
@@ -322,9 +324,7 @@ impl AacAtDecoder {
         self.input_queue = std::mem::take(&mut ctx.queue);
 
         if status != NO_ERR && status != 1 {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer failed: OSStatus {status}"
-            )));
+            return Err(status_error("AudioConverterFillComplexBuffer", status));
         }
 
         let actual_bytes = abl.buffers[0].data_byte_size as usize;
@@ -482,7 +482,7 @@ unsafe extern "C" fn aac_input_callback(
 /// Factory function registered with the codec registry.
 pub fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
     // Verify framework is reachable before claiming success.
-    sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+    sys::framework().map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
     Ok(Box::new(AacAtDecoder::new(params)))
 }
 

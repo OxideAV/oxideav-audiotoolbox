@@ -51,6 +51,7 @@ use oxideav_core::{
 };
 
 use crate::flac::{self, StreamInfo};
+use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
     AudioStreamPacketDescription, K_AUDIO_CONVERTER_COMPRESSION_MAGIC_COOKIE,
@@ -139,8 +140,8 @@ unsafe impl Send for FlacAtEncoder {}
 
 impl FlacAtEncoder {
     fn new(params: &CodecParameters) -> Result<Self> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let sr = params.sample_rate.unwrap_or(48_000);
         let ch = params.channels.unwrap_or(2);
@@ -200,9 +201,7 @@ impl FlacAtEncoder {
         let mut converter: AudioConverterRef = std::ptr::null_mut();
         let status = unsafe { sys::audio_converter_new(fw, &in_asbd, &out_asbd, &mut converter) };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterNew (FLAC enc) failed: OSStatus {status}"
-            )));
+            return Err(status_error("AudioConverterNew (FLAC enc)", status));
         }
 
         // Query maximum output packet size so the per-packet output
@@ -307,8 +306,8 @@ impl FlacAtEncoder {
     /// converter produced output (an empty pull just means the
     /// encoder is still buffering).
     fn pump_one_packet(&mut self) -> Result<()> {
-        let fw =
-            sys::framework().map_err(|e| Error::other(format!("AudioToolbox unavailable: {e}")))?;
+        let fw = sys::framework()
+            .map_err(|e| Error::unsupported(format!("AudioToolbox unavailable: {e}")))?;
 
         let out_size = self.max_packet_bytes as usize;
         let mut out_buf = vec![0u8; out_size];
@@ -336,9 +335,10 @@ impl FlacAtEncoder {
             )
         };
         if status != NO_ERR {
-            return Err(Error::other(format!(
-                "AudioConverterFillComplexBuffer (FLAC enc) failed: OSStatus {status}"
-            )));
+            return Err(status_error(
+                "AudioConverterFillComplexBuffer (FLAC enc)",
+                status,
+            ));
         }
 
         let raw_len = abl.buffers[0].data_byte_size as usize;
@@ -429,9 +429,10 @@ fn read_compression_cookie(fw: &sys::Framework, converter: AudioConverterRef) ->
         )
     };
     if status != NO_ERR || size == 0 {
-        return Err(Error::other(format!(
-            "GetPropertyInfo(CompressionMagicCookie / FLAC) failed: OSStatus {status}, size {size}"
-        )));
+        return Err(status_error(
+            &format!("GetPropertyInfo(CompressionMagicCookie / FLAC) (size {size})"),
+            status,
+        ));
     }
 
     let mut buf = vec![0u8; size as usize];
@@ -446,9 +447,10 @@ fn read_compression_cookie(fw: &sys::Framework, converter: AudioConverterRef) ->
         )
     };
     if status != NO_ERR {
-        return Err(Error::other(format!(
-            "GetProperty(CompressionMagicCookie / FLAC) failed: OSStatus {status}"
-        )));
+        return Err(status_error(
+            "GetProperty(CompressionMagicCookie / FLAC)",
+            status,
+        ));
     }
     buf.truncate(io_size as usize);
     Ok(buf)
