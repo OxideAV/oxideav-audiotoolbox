@@ -188,6 +188,45 @@ pub fn format_is_externally_framed(asbd: &AudioStreamBasicDescription) -> Result
     asbd_bool_property(K_AUDIO_FORMAT_PROPERTY_FORMAT_IS_EXTERNALLY_FRAMED, asbd)
 }
 
+/// A one-shot snapshot of the OS's decode/encode format sets, for
+/// callers that gate many decisions on the inventory without
+/// re-querying the framework per format (e.g. `register()`, which
+/// checks up to nine codec slots).
+///
+/// [`OsInventory::probe`] is infallible by design: if either query
+/// fails (framework missing, property refused), the corresponding
+/// set is left empty and the membership tests report `true` — the
+/// caller falls back to optimistic registration and the per-factory
+/// error paths still guard at construction time.
+#[derive(Clone, Debug, Default)]
+pub struct OsInventory {
+    decodable: Vec<AudioFormatId>,
+    encodable: Vec<AudioFormatId>,
+}
+
+impl OsInventory {
+    /// Snapshot the OS inventory. Never fails; see the type docs for
+    /// the degraded-mode semantics.
+    pub fn probe() -> Self {
+        Self {
+            decodable: decodable_format_ids().unwrap_or_default(),
+            encodable: encodable_format_ids().unwrap_or_default(),
+        }
+    }
+
+    /// `true` when the OS decodes `id` — or when the decode set could
+    /// not be queried (optimistic fallback).
+    pub fn decodes(&self, id: AudioFormatId) -> bool {
+        self.decodable.is_empty() || self.decodable.contains(&id)
+    }
+
+    /// `true` when the OS encodes to `id` — or when the encode set
+    /// could not be queried (optimistic fallback).
+    pub fn encodes(&self, id: AudioFormatId) -> bool {
+        self.encodable.is_empty() || self.encodable.contains(&id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +414,19 @@ mod tests {
                 "classifier round-trip must be lossless"
             );
         }
+    }
+
+    #[test]
+    fn os_inventory_snapshot_matches_the_live_queries() {
+        let inv = OsInventory::probe();
+        assert!(inv.decodes(F::Mpeg4AacLc));
+        assert!(inv.encodes(F::Mpeg4AacLc));
+        assert!(inv.decodes(F::AmrNb));
+        assert!(!inv.encodes(F::AmrNb), "AMR-NB is decode-only");
+        assert!(!inv.encodes(F::MpegLayer3), "MP3 is decode-only");
+        // The degraded default (empty sets) is optimistic.
+        let empty = OsInventory::default();
+        assert!(empty.decodes(F::Unknown(0x7878_7878)));
+        assert!(empty.encodes(F::Unknown(0x7878_7878)));
     }
 }

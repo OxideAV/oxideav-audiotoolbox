@@ -100,6 +100,13 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
         return;
     }
 
+    // Snapshot the OS's own decode/encode inventory once and register
+    // only the halves the running system actually backs, so the
+    // registry never claims a codec slot this macOS lacks. The probe
+    // is optimistic on failure (empty sets ⇒ register everything;
+    // the per-factory error paths still guard at construction time).
+    let inv = inventory::OsInventory::probe();
+
     let cid = CodecId::new("aac");
 
     // Decoder registration.
@@ -111,19 +118,21 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(8)
         .with_max_sample_rate(96_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid.clone())
-            .capabilities(dec_caps)
-            .decoder(decoder::make_decoder)
-            .tags([
-                CodecTag::wave_format(0x00FF),
-                CodecTag::wave_format(0x706D),
-                CodecTag::wave_format(0x4143),
-                CodecTag::wave_format(0xA106),
-                CodecTag::mp4_object_type(0x40),
-                CodecTag::matroska("A_AAC"),
-            ]),
-    );
+    if inv.decodes(sys::AudioFormatId::Mpeg4AacLc) {
+        ctx.codecs.register(
+            CodecInfo::new(cid.clone())
+                .capabilities(dec_caps)
+                .decoder(decoder::make_decoder)
+                .tags([
+                    CodecTag::wave_format(0x00FF),
+                    CodecTag::wave_format(0x706D),
+                    CodecTag::wave_format(0x4143),
+                    CodecTag::wave_format(0xA106),
+                    CodecTag::mp4_object_type(0x40),
+                    CodecTag::matroska("A_AAC"),
+                ]),
+        );
+    }
 
     // Encoder registration.
     let enc_caps = CodecCapabilities::audio("aac_audiotoolbox")
@@ -134,19 +143,21 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(8)
         .with_max_sample_rate(96_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(enc_caps)
-            .encoder(encoder::make_encoder),
-    );
+    if inv.encodes(sys::AudioFormatId::Mpeg4AacLc) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(enc_caps)
+                .encoder(encoder::make_encoder),
+        );
+    }
 
-    register_alac(ctx);
-    register_ilbc(ctx);
-    register_amr_nb(ctx);
-    register_amr_wb(ctx);
-    register_mp3(ctx);
-    register_flac(ctx);
-    register_opus(ctx);
+    register_alac(ctx, &inv);
+    register_ilbc(ctx, &inv);
+    register_amr_nb(ctx, &inv);
+    register_amr_wb(ctx, &inv);
+    register_mp3(ctx, &inv);
+    register_flac(ctx, &inv);
+    register_opus(ctx, &inv);
 }
 
 /// Register Apple Lossless (ALAC) decoder + encoder factories.
@@ -159,7 +170,7 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
 /// ALAC is lossless so `with_lossy(false)`. Priority matches AAC at 10
 /// so the HW path wins over any future pure-Rust ALAC implementation.
 #[cfg(feature = "registry")]
-fn register_alac(ctx: &mut oxideav_core::RuntimeContext) {
+fn register_alac(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
     let cid = CodecId::new("alac");
 
     let dec_caps = CodecCapabilities::audio("alac_audiotoolbox")
@@ -170,12 +181,14 @@ fn register_alac(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(8)
         .with_max_sample_rate(384_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid.clone())
-            .capabilities(dec_caps)
-            .decoder(alac_decoder::make_decoder)
-            .tags([CodecTag::fourcc(b"alac"), CodecTag::matroska("A_ALAC")]),
-    );
+    if inv.decodes(sys::AudioFormatId::AppleLossless) {
+        ctx.codecs.register(
+            CodecInfo::new(cid.clone())
+                .capabilities(dec_caps)
+                .decoder(alac_decoder::make_decoder)
+                .tags([CodecTag::fourcc(b"alac"), CodecTag::matroska("A_ALAC")]),
+        );
+    }
 
     let enc_caps = CodecCapabilities::audio("alac_audiotoolbox")
         .with_lossy(false)
@@ -185,11 +198,13 @@ fn register_alac(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(8)
         .with_max_sample_rate(384_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(enc_caps)
-            .encoder(alac_encoder::make_encoder),
-    );
+    if inv.encodes(sys::AudioFormatId::AppleLossless) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(enc_caps)
+                .encoder(alac_encoder::make_encoder),
+        );
+    }
 }
 
 /// Register iLBC (Internet Low Bitrate Codec) decoder + encoder
@@ -202,7 +217,7 @@ fn register_alac(ctx: &mut oxideav_core::RuntimeContext) {
 ///   sample-entry tables.
 /// * Matroska `A_REAL/iLBC` — Matroska's CodecID for iLBC tracks.
 #[cfg(feature = "registry")]
-fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext) {
+fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
     let cid = CodecId::new("ilbc");
 
     let dec_caps = CodecCapabilities::audio("ilbc_audiotoolbox")
@@ -213,12 +228,14 @@ fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(1)
         .with_max_sample_rate(8_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid.clone())
-            .capabilities(dec_caps)
-            .decoder(ilbc_decoder::make_decoder)
-            .tags([CodecTag::fourcc(b"ilbc"), CodecTag::matroska("A_REAL/iLBC")]),
-    );
+    if inv.decodes(sys::AudioFormatId::Ilbc) {
+        ctx.codecs.register(
+            CodecInfo::new(cid.clone())
+                .capabilities(dec_caps)
+                .decoder(ilbc_decoder::make_decoder)
+                .tags([CodecTag::fourcc(b"ilbc"), CodecTag::matroska("A_REAL/iLBC")]),
+        );
+    }
 
     let enc_caps = CodecCapabilities::audio("ilbc_audiotoolbox")
         .with_lossy(true)
@@ -228,11 +245,13 @@ fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(1)
         .with_max_sample_rate(8_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(enc_caps)
-            .encoder(ilbc_encoder::make_encoder),
-    );
+    if inv.encodes(sys::AudioFormatId::Ilbc) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(enc_caps)
+                .encoder(ilbc_encoder::make_encoder),
+        );
+    }
 }
 
 /// Register AMR-NB (Adaptive Multi-Rate Narrowband) **decoder** factory.
@@ -245,7 +264,7 @@ fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext) {
 ///   MOV / MP4 / 3GP sample-entry tables (`SampleEntry.format = 'samr'`).
 /// * Matroska `A_AMR/NB` — Matroska's CodecID for AMR-NB tracks.
 #[cfg(feature = "registry")]
-fn register_amr_nb(ctx: &mut oxideav_core::RuntimeContext) {
+fn register_amr_nb(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
     let cid = CodecId::new("amr_nb");
 
     let dec_caps = CodecCapabilities::audio("amr_nb_audiotoolbox")
@@ -256,12 +275,14 @@ fn register_amr_nb(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(1)
         .with_max_sample_rate(8_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(dec_caps)
-            .decoder(amr_decoder::make_decoder)
-            .tags([CodecTag::fourcc(b"samr"), CodecTag::matroska("A_AMR/NB")]),
-    );
+    if inv.decodes(sys::AudioFormatId::AmrNb) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(dec_caps)
+                .decoder(amr_decoder::make_decoder)
+                .tags([CodecTag::fourcc(b"samr"), CodecTag::matroska("A_AMR/NB")]),
+        );
+    }
 }
 
 /// Register AMR-WB (Adaptive Multi-Rate Wideband) **decoder** factory.
@@ -275,7 +296,7 @@ fn register_amr_nb(ctx: &mut oxideav_core::RuntimeContext) {
 ///   by MOV / MP4 / 3GP sample-entry tables (`SampleEntry.format = 'sawb'`).
 /// * Matroska `A_AMR/WB` — Matroska's CodecID for AMR-WB tracks.
 #[cfg(feature = "registry")]
-fn register_amr_wb(ctx: &mut oxideav_core::RuntimeContext) {
+fn register_amr_wb(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
     let cid = CodecId::new("amr_wb");
 
     let dec_caps = CodecCapabilities::audio("amr_wb_audiotoolbox")
@@ -286,12 +307,14 @@ fn register_amr_wb(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(1)
         .with_max_sample_rate(16_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(dec_caps)
-            .decoder(amr_wb_decoder::make_decoder)
-            .tags([CodecTag::fourcc(b"sawb"), CodecTag::matroska("A_AMR/WB")]),
-    );
+    if inv.decodes(sys::AudioFormatId::AmrWb) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(dec_caps)
+                .decoder(amr_wb_decoder::make_decoder)
+                .tags([CodecTag::fourcc(b"sawb"), CodecTag::matroska("A_AMR/WB")]),
+        );
+    }
 }
 
 /// Register MP3 (MPEG-1 / 2 / 2.5 Audio Layer III) **decoder** factory.
@@ -318,7 +341,7 @@ fn register_amr_wb(ctx: &mut oxideav_core::RuntimeContext) {
 /// lazily from the first frame header — caller-supplied parameters
 /// are advisory.
 #[cfg(feature = "registry")]
-fn register_mp3(ctx: &mut oxideav_core::RuntimeContext) {
+fn register_mp3(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
     let cid = CodecId::new("mp3");
 
     let dec_caps = CodecCapabilities::audio("mp3_audiotoolbox")
@@ -329,17 +352,19 @@ fn register_mp3(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(2)
         .with_max_sample_rate(48_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(dec_caps)
-            .decoder(mp3_decoder::make_decoder)
-            .tags([
-                CodecTag::fourcc(b".mp3"),
-                CodecTag::mp4_object_type(0x6B),
-                CodecTag::matroska("A_MPEG/L3"),
-                CodecTag::wave_format(0x0055),
-            ]),
-    );
+    if inv.decodes(sys::AudioFormatId::MpegLayer3) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(dec_caps)
+                .decoder(mp3_decoder::make_decoder)
+                .tags([
+                    CodecTag::fourcc(b".mp3"),
+                    CodecTag::mp4_object_type(0x6B),
+                    CodecTag::matroska("A_MPEG/L3"),
+                    CodecTag::wave_format(0x0055),
+                ]),
+        );
+    }
 }
 
 /// Register FLAC (Free Lossless Audio Codec, RFC 9639) **decoder +
@@ -369,7 +394,7 @@ fn register_mp3(ctx: &mut oxideav_core::RuntimeContext) {
 /// `dfLa` magic cookie via `output_params.extradata` for downstream
 /// muxer use.
 #[cfg(feature = "registry")]
-fn register_flac(ctx: &mut oxideav_core::RuntimeContext) {
+fn register_flac(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
     let cid = CodecId::new("flac");
 
     let dec_caps = CodecCapabilities::audio("flac_audiotoolbox")
@@ -380,12 +405,14 @@ fn register_flac(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(8)
         .with_max_sample_rate(192_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid.clone())
-            .capabilities(dec_caps)
-            .decoder(flac_decoder::make_decoder)
-            .tags([CodecTag::fourcc(b"flac"), CodecTag::matroska("A_FLAC")]),
-    );
+    if inv.decodes(sys::AudioFormatId::Flac) {
+        ctx.codecs.register(
+            CodecInfo::new(cid.clone())
+                .capabilities(dec_caps)
+                .decoder(flac_decoder::make_decoder)
+                .tags([CodecTag::fourcc(b"flac"), CodecTag::matroska("A_FLAC")]),
+        );
+    }
 
     let enc_caps = CodecCapabilities::audio("flac_audiotoolbox")
         .with_lossy(false)
@@ -395,11 +422,13 @@ fn register_flac(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(8)
         .with_max_sample_rate(192_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(enc_caps)
-            .encoder(flac_encoder::make_encoder),
-    );
+    if inv.encodes(sys::AudioFormatId::Flac) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(enc_caps)
+                .encoder(flac_encoder::make_encoder),
+        );
+    }
 }
 
 /// Register Opus (IETF RFC 6716 / RFC 7845 / RFC 8251) **decoder +
@@ -422,7 +451,7 @@ fn register_flac(ctx: &mut oxideav_core::RuntimeContext) {
 /// 48 kHz per RFC 6716 §2.1.1 (the bridge defaults to 48 kHz —
 /// the RFC 7845 §5.1 recommended player rate).
 #[cfg(feature = "registry")]
-fn register_opus(ctx: &mut oxideav_core::RuntimeContext) {
+fn register_opus(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInventory) {
     let cid = CodecId::new("opus");
 
     let dec_caps = CodecCapabilities::audio("opus_audiotoolbox")
@@ -433,12 +462,14 @@ fn register_opus(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(2)
         .with_max_sample_rate(48_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid.clone())
-            .capabilities(dec_caps)
-            .decoder(opus_decoder::make_decoder)
-            .tags([CodecTag::fourcc(b"Opus"), CodecTag::matroska("A_OPUS")]),
-    );
+    if inv.decodes(sys::AudioFormatId::Opus) {
+        ctx.codecs.register(
+            CodecInfo::new(cid.clone())
+                .capabilities(dec_caps)
+                .decoder(opus_decoder::make_decoder)
+                .tags([CodecTag::fourcc(b"Opus"), CodecTag::matroska("A_OPUS")]),
+        );
+    }
 
     let enc_caps = CodecCapabilities::audio("opus_audiotoolbox")
         .with_lossy(true)
@@ -448,11 +479,13 @@ fn register_opus(ctx: &mut oxideav_core::RuntimeContext) {
         .with_max_channels(2)
         .with_max_sample_rate(48_000);
 
-    ctx.codecs.register(
-        CodecInfo::new(cid)
-            .capabilities(enc_caps)
-            .encoder(opus_encoder::make_encoder),
-    );
+    if inv.encodes(sys::AudioFormatId::Opus) {
+        ctx.codecs.register(
+            CodecInfo::new(cid)
+                .capabilities(enc_caps)
+                .encoder(opus_encoder::make_encoder),
+        );
+    }
 }
 
 #[cfg(feature = "registry")]
@@ -468,6 +501,40 @@ oxideav_core::register!("audiotoolbox", register);
 mod register_tests {
     use super::*;
     use oxideav_core::{CodecId, RuntimeContext};
+
+    #[test]
+    fn registration_matches_the_os_inventory_exactly() {
+        // The registered decoder/encoder set must mirror the OS's own
+        // inventory claim for every wired codec id, in both
+        // directions — presence AND absence.
+        use crate::sys::AudioFormatId as F;
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        for (cid, fmt) in [
+            ("aac", F::Mpeg4AacLc),
+            ("alac", F::AppleLossless),
+            ("ilbc", F::Ilbc),
+            ("amr_nb", F::AmrNb),
+            ("amr_wb", F::AmrWb),
+            ("mp3", F::MpegLayer3),
+            ("flac", F::Flac),
+            ("opus", F::Opus),
+        ] {
+            let id = CodecId::new(cid);
+            let os_dec = crate::inventory::can_decode(fmt).unwrap_or(true);
+            let os_enc = crate::inventory::can_encode(fmt).unwrap_or(true);
+            assert_eq!(
+                ctx.codecs.has_decoder(&id),
+                os_dec,
+                "{cid}: registered-decoder must mirror the OS decode inventory"
+            );
+            assert_eq!(
+                ctx.codecs.has_encoder(&id),
+                os_enc,
+                "{cid}: registered-encoder must mirror the OS encode inventory"
+            );
+        }
+    }
 
     #[test]
     fn register_installs_factories() {

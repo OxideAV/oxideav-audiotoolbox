@@ -131,6 +131,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trim the analysis warm-up. Hardware test asserts the AAC priming
   is nonzero and both options parse as integers.
 
+- **Round 401: registration gated on the live OS inventory**.
+  `register()` snapshots the system's decode/encode format sets once
+  (`inventory::OsInventory::probe`) and registers only the halves
+  the running macOS actually backs, so the registry never claims a
+  codec slot this system lacks (a future macOS dropping a codec
+  degrades to the pure-Rust fallback instead of a dead registration;
+  today's inventory backs every wired slot, so behaviour is
+  unchanged on current systems). The probe is optimistic on failure
+  — an unqueryable inventory registers everything and the
+  per-factory error paths still guard at construction. New
+  `registration_matches_the_os_inventory_exactly` test mirrors
+  presence AND absence per codec id in both directions, and
+  `OsInventory` gets its own snapshot/degraded-mode tests.
+
 - **Round 401: converter-property + global AudioFormat sys surface**.
   The `sys` module grows the introspection half of the AudioConverter
   property set — buffer sizing (`'mobs'` / `'cibs'` / `'cobs'`),
