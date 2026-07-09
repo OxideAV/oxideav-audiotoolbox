@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.3...v0.0.4) - 2026-07-09
+
+### Other
+
+- refresh stale Layer-III-only note on the mpeg_layer1 constructor
+- round 401: MP1 + MP2 decode — full MPEG-audio family through the shared bridge
+- round 401 — typed error taxonomy, RAII converter, OS inventory, priming
+- round 401: gate registration on the live OS codec inventory
+- round 401: AAC encoder publishes priming figures via output_params options
+- round 401: ASBD::validate() + full wired-set hardware acceptance
+- round 401: route all 38 OSStatus failure sites through the typed taxonomy
+- round 401: OS codec inventory module — registration claims pinned against the OS
+- round 401: safe RAII Converter wrapper + typed AtError
+- round 401: converter-property + global AudioFormat sys surface
+- round 401: typed OSStatus error taxonomy (status module)
+- add CI / crates.io / docs.rs / MIT-license badges
+- round 319: AudioFormatId family / codec-id / FourCC accessors
+- refresh to current status, drop per-round changelog cruft
+- round 265: typed AudioFormatId classifier for ASBD format_id
+- drop release-plz.toml — use release-plz defaults across the workspace
+- round 224: Opus decoder + encoder via AudioConverter
+- round 218: FLAC encoder via AudioConverter — bit-exact lossless roundtrip
+- round 212: ALAC decoder S32 output path (lossless 24/32-bit tightening)
+- round 10: FLAC (RFC 9639) decode via AudioConverter
+- round 9: MP3 (MPEG-1/2/2.5 Audio Layer III) decode via AudioConverter
+
 ### Changed
 
 - **Round 401: every `OSStatus` failure site routed through the typed
