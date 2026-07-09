@@ -5,7 +5,10 @@
 //! and measures per-channel SNR after accounting for the codec's group delay.
 //! Pass criterion: ≥ 25 dB on at least one 2048-sample window per channel.
 
-#![cfg(target_os = "macos")]
+// `registry` gates the oxideav-core dependency these tests drive;
+// without it the crate exposes only the raw bridge, so the whole
+// test target compiles away (matching the standalone CI path).
+#![cfg(all(target_os = "macos", feature = "registry"))]
 
 use std::f32::consts::PI;
 

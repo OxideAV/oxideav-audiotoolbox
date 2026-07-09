@@ -544,6 +544,107 @@ impl AudioStreamBasicDescription {
         self.audio_format_id().codec_id_str()
     }
 
+    /// Validate the descriptor's internal consistency against the
+    /// geometry rules of its `format_id` slot.
+    ///
+    /// This is a *pure* structural check — no framework call — meant
+    /// to catch descriptor-construction bugs before they surface as
+    /// an opaque converter-creation rejection. The rules:
+    ///
+    /// * every format: `sample_rate > 0`, `channels_per_frame > 0`;
+    /// * linear PCM: `bits_per_channel > 0`, byte counts consistent
+    ///   (`bytes_per_frame = channels × bits/8`, `bytes_per_packet =
+    ///   bytes_per_frame × frames_per_packet`), `frames_per_packet ≥ 1`;
+    /// * compressed slots: `bytes_per_frame = 0` and
+    ///   `bits_per_channel = 0` (the compressed stream has neither),
+    ///   `frames_per_packet > 0`;
+    /// * per-format extras: iLBC's two RFC 3951 modes (160 / 38 or
+    ///   240 / 50), AMR-NB / AMR-WB fixed mono 8 / 16 kHz geometry,
+    ///   Opus's "has no flags" rule, and the ALAC / FLAC source-data
+    ///   flag range (1..=4);
+    /// * an unwired `format_id` fails — the bridge cannot vouch for
+    ///   a slot it doesn't know.
+    ///
+    /// Returns a human-readable rule name on failure.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.sample_rate <= 0.0 {
+            return Err("sample_rate must be positive");
+        }
+        if self.channels_per_frame == 0 {
+            return Err("channels_per_frame must be nonzero");
+        }
+        match self.audio_format_id() {
+            AudioFormatId::LinearPcm => {
+                if self.bits_per_channel == 0 {
+                    return Err("PCM: bits_per_channel must be nonzero");
+                }
+                if self.bits_per_channel % 8 != 0 {
+                    return Err("PCM: bits_per_channel must be byte-aligned");
+                }
+                let expect_frame = self.channels_per_frame * self.bits_per_channel / 8;
+                if self.bytes_per_frame != expect_frame {
+                    return Err("PCM: bytes_per_frame must equal channels × bits/8");
+                }
+                if self.frames_per_packet == 0 {
+                    return Err("PCM: frames_per_packet must be nonzero");
+                }
+                if self.bytes_per_packet != self.bytes_per_frame * self.frames_per_packet {
+                    return Err(
+                        "PCM: bytes_per_packet must equal bytes_per_frame × frames_per_packet",
+                    );
+                }
+                Ok(())
+            }
+            AudioFormatId::Unknown(_) => Err("unwired format_id"),
+            compressed => {
+                if self.bytes_per_frame != 0 {
+                    return Err("compressed: bytes_per_frame must be 0");
+                }
+                if self.bits_per_channel != 0 {
+                    return Err("compressed: bits_per_channel must be 0");
+                }
+                if self.frames_per_packet == 0 {
+                    return Err("compressed: frames_per_packet must be nonzero");
+                }
+                match compressed {
+                    AudioFormatId::Ilbc => {
+                        match (self.frames_per_packet, self.bytes_per_packet) {
+                            (160, 38) | (240, 50) => {}
+                            _ => return Err("iLBC: mode must be 160/38 (20 ms) or 240/50 (30 ms)"),
+                        }
+                        if self.sample_rate != 8_000.0 || self.channels_per_frame != 1 {
+                            return Err("iLBC: fixed 8 kHz mono");
+                        }
+                    }
+                    AudioFormatId::AmrNb
+                        if self.sample_rate != 8_000.0
+                            || self.channels_per_frame != 1
+                            || self.frames_per_packet != 160 =>
+                    {
+                        return Err("AMR-NB: fixed 8 kHz mono, 160 frames per packet")
+                    }
+                    AudioFormatId::AmrWb
+                        if self.sample_rate != 16_000.0
+                            || self.channels_per_frame != 1
+                            || self.frames_per_packet != 320 =>
+                    {
+                        return Err("AMR-WB: fixed 16 kHz mono, 320 frames per packet")
+                    }
+                    AudioFormatId::Opus if self.format_flags != 0 => {
+                        return Err("Opus: format_flags must be 0 (has no flags)")
+                    }
+                    AudioFormatId::AppleLossless | AudioFormatId::Flac
+                        if !(1..=4).contains(&self.format_flags) =>
+                    {
+                        return Err("ALAC/FLAC: format_flags must be a source-data value (1..=4)")
+                    }
+                    _ => {}
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Construct an ASBD for 32-bit float interleaved PCM.
     pub fn pcm_float32(sample_rate: f64, channels: u32) -> Self {
         let bps = 4u32; // bytes per sample
@@ -1393,6 +1494,71 @@ mod tests {
                 .get(b"AudioFormatGetPropertyInfo\0")
                 .expect("AudioFormatGetPropertyInfo symbol")
         };
+    }
+
+    #[test]
+    fn validate_accepts_every_pcm_constructor() {
+        for asbd in [
+            AudioStreamBasicDescription::pcm_float32(48_000.0, 2),
+            AudioStreamBasicDescription::pcm_s16(44_100.0, 1),
+            AudioStreamBasicDescription::pcm_s32(96_000.0, 8),
+        ] {
+            assert_eq!(asbd.validate(), Ok(()), "{:#010x}", asbd.format_id);
+        }
+    }
+
+    #[test]
+    fn validate_rejects_inconsistent_descriptors() {
+        // Zero sample rate.
+        let mut a = AudioStreamBasicDescription::pcm_s16(0.0, 2);
+        assert!(a.validate().is_err());
+
+        // Zero channels.
+        a = AudioStreamBasicDescription::pcm_s16(48_000.0, 2);
+        a.channels_per_frame = 0;
+        assert!(a.validate().is_err());
+
+        // PCM byte-count mismatch (bytes_per_frame lies about width).
+        a = AudioStreamBasicDescription::pcm_s16(48_000.0, 2);
+        a.bytes_per_frame = 3;
+        assert!(a.validate().is_err());
+
+        // Compressed slot carrying PCM-only fields.
+        a = AudioStreamBasicDescription::mpeg4_aac(48_000.0, 2);
+        a.bits_per_channel = 16;
+        assert!(a.validate().is_err());
+
+        // iLBC with a mode geometry RFC 3951 doesn't define.
+        a = AudioStreamBasicDescription::ilbc(160);
+        a.bytes_per_packet = 50; // 20 ms frames with the 30 ms byte count
+        assert!(a.validate().is_err());
+        assert!(AudioStreamBasicDescription::ilbc(100).validate().is_err());
+
+        // AMR-WB at the wrong rate.
+        a = AudioStreamBasicDescription::amr_wb();
+        a.sample_rate = 8_000.0;
+        assert!(a.validate().is_err());
+
+        // Opus with flags (the header says it has none).
+        a = AudioStreamBasicDescription::opus(48_000.0, 2, 960);
+        a.format_flags = 1;
+        assert!(a.validate().is_err());
+
+        // FLAC with an out-of-range source-data flag.
+        a = AudioStreamBasicDescription::flac(44_100.0, 2, 5, 4096);
+        assert!(a.validate().is_err());
+        a = AudioStreamBasicDescription::flac(44_100.0, 2, 0, 4096);
+        assert!(a.validate().is_err());
+
+        // Unwired FourCC: the bridge cannot vouch for it.
+        a = AudioStreamBasicDescription {
+            sample_rate: 48_000.0,
+            format_id: 0x7A7A_7A7A,
+            channels_per_frame: 2,
+            frames_per_packet: 1024,
+            ..AudioStreamBasicDescription::default()
+        };
+        assert!(a.validate().is_err());
     }
 
     #[test]

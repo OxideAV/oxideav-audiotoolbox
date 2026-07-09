@@ -22,7 +22,10 @@
 //! reconstruction is hostile to a CELT-style perceptual encoder
 //! whose quantiser is tuned for music + speech mixed content.
 
-#![cfg(target_os = "macos")]
+// `registry` gates the oxideav-core dependency these tests drive;
+// without it the crate exposes only the raw bridge, so the whole
+// test target compiles away (matching the standalone CI path).
+#![cfg(all(target_os = "macos", feature = "registry"))]
 
 use std::f32::consts::PI;
 

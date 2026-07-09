@@ -103,6 +103,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the plausible-looking `'acdf'` is rejected with
   `PropertyNotSupported`).
 
+- **Round 401: `AudioStreamBasicDescription::validate()` + full-set
+  hardware acceptance**. A pure structural consistency check over the
+  descriptor's `format_id` geometry rules: positive sample rate and
+  channel count everywhere; PCM byte-count arithmetic
+  (`bytes_per_frame = channels × bits/8`, packet = frame ×
+  frames-per-packet); compressed slots must carry zero
+  `bytes_per_frame` / `bits_per_channel` and a nonzero
+  `frames_per_packet`; per-format extras (iLBC's two RFC 3951 modes,
+  AMR-NB / AMR-WB fixed mono 8 / 16 kHz geometry, Opus's no-flags
+  rule, the ALAC / FLAC source-data flag range 1..=4); unwired
+  FourCCs fail. Catches descriptor-construction bugs before they
+  surface as an opaque converter-creation rejection. Paired hardware
+  test: all 15 wired compressed-format constructors both
+  self-validate and are accepted by `AudioConverterNew` as decode
+  sources against a float-PCM output (verified: no wired slot needs
+  a magic cookie at *creation* time). Also: the 12 integration-test
+  targets gain a `feature = "registry"` gate so
+  `--no-default-features --all-targets` builds cleanly (previously
+  only `--lib` compiled standalone).
+
 - **Round 401: converter-property + global AudioFormat sys surface**.
   The `sys` module grows the introspection half of the AudioConverter
   property set — buffer sizing (`'mobs'` / `'cibs'` / `'cobs'`),

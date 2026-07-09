@@ -490,6 +490,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_wired_decode_constructor_is_accepted_by_the_framework() {
+        // Hardware acceptance: each compressed-format ASBD constructor
+        // in `sys` must (a) pass the pure `validate()` check and
+        // (b) be accepted by AudioConverterNew as the decode source
+        // paired with a float-PCM output at the same rate/channels.
+        // Verified empirically: none of the wired slots require a
+        // magic cookie at *creation* time (cookies configure the
+        // converter after it exists).
+        use crate::sys::K_AF_APPLE_LOSSLESS_16_BIT as B16;
+        let cases: Vec<(&str, Asbd)> = vec![
+            ("aac-lc", Asbd::mpeg4_aac(44_100.0, 2)),
+            ("aac-he", Asbd::mpeg4_aac_he(44_100.0, 2)),
+            ("aac-hev2", Asbd::mpeg4_aac_he_v2(44_100.0, 2)),
+            ("aac-ld", Asbd::mpeg4_aac_ld(44_100.0, 2)),
+            ("aac-eld", Asbd::mpeg4_aac_eld(44_100.0, 2)),
+            ("alac", Asbd::apple_lossless(44_100.0, 2, B16, 4096)),
+            ("ilbc-20ms", Asbd::ilbc(160)),
+            ("ilbc-30ms", Asbd::ilbc(240)),
+            ("amr-nb", Asbd::amr_nb()),
+            ("amr-wb", Asbd::amr_wb()),
+            ("mp1", Asbd::mpeg_layer1(44_100.0, 2)),
+            ("mp2", Asbd::mpeg_layer2(44_100.0, 2)),
+            ("mp3", Asbd::mpeg_layer3(44_100.0, 2, 1152)),
+            ("flac", Asbd::flac(44_100.0, 2, B16, 4096)),
+            ("opus", Asbd::opus(48_000.0, 2, 960)),
+        ];
+        for (name, asbd) in cases {
+            assert_eq!(asbd.validate(), Ok(()), "{name} should self-validate");
+            let out = Asbd::pcm_float32(asbd.sample_rate, asbd.channels_per_frame);
+            let c = Converter::new(&asbd, &out);
+            assert!(
+                c.is_ok(),
+                "{name} decode converter should be accepted: {:?}",
+                c.err()
+            );
+        }
+    }
+
     #[cfg(feature = "registry")]
     #[test]
     fn at_error_converts_into_core_error() {

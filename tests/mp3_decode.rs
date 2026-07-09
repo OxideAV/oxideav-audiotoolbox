@@ -24,7 +24,10 @@
 //! GitHub Actions CI (which checks out only the per-crate repo) can
 //! find it without the umbrella's `docs/` submodule.
 
-#![cfg(target_os = "macos")]
+// `registry` gates the oxideav-core dependency these tests drive;
+// without it the crate exposes only the raw bridge, so the whole
+// test target compiles away (matching the standalone CI path).
+#![cfg(all(target_os = "macos", feature = "registry"))]
 
 use std::path::PathBuf;
 

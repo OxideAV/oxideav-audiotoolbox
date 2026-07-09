@@ -28,7 +28,10 @@
 //! changes, and `flush()` drains the trailing PCM held back by the
 //! slack policy.
 
-#![cfg(target_os = "macos")]
+// `registry` gates the oxideav-core dependency these tests drive;
+// without it the crate exposes only the raw bridge, so the whole
+// test target compiles away (matching the standalone CI path).
+#![cfg(all(target_os = "macos", feature = "registry"))]
 
 use oxideav_audiotoolbox::amr_wb::{make_toc, FrameType};
 use oxideav_audiotoolbox::amr_wb_decoder;

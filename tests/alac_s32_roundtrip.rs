@@ -18,7 +18,10 @@
 //! pcm_s16-always, the 32-bit precision test fails because the noise
 //! term we inject lives entirely below the 16-bit quantisation floor.
 
-#![cfg(target_os = "macos")]
+// `registry` gates the oxideav-core dependency these tests drive;
+// without it the crate exposes only the raw bridge, so the whole
+// test target compiles away (matching the standalone CI path).
+#![cfg(all(target_os = "macos", feature = "registry"))]
 
 use std::f64::consts::PI;
 
