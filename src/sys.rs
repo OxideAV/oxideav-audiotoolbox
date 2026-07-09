@@ -924,10 +924,9 @@ impl AudioStreamBasicDescription {
 
     /// Construct an ASBD for MPEG audio Layer I.
     ///
-    /// Layer I is fixed at **384 samples per frame**. Included for
-    /// completeness — the AT bridge currently registers only Layer
-    /// III, but having all three constants keeps the public sys
-    /// surface consistent with the underlying AudioToolbox API.
+    /// Layer I is fixed at **384 samples per frame**. Used by the
+    /// shared MPEG-audio decode bridge when the registered `mp1`
+    /// factory resolves a Layer I stream.
     pub fn mpeg_layer1(sample_rate: f64, channels: u32) -> Self {
         Self {
             sample_rate,
