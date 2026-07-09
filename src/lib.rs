@@ -47,6 +47,7 @@ pub mod flac;
 pub mod ilbc;
 pub mod mp3;
 pub mod opus;
+pub mod status;
 pub mod sys;
 
 #[cfg(feature = "registry")]
