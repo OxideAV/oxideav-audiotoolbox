@@ -46,6 +46,7 @@ pub mod amr_wb;
 pub mod converter;
 pub mod flac;
 pub mod ilbc;
+pub mod inventory;
 pub mod mp3;
 pub mod opus;
 pub mod status;

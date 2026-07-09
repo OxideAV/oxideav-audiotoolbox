@@ -59,6 +59,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `'acod'` responds, so the wrapper exposes only
   `current_output_stream_description`.
 
+- **Round 401: OS codec inventory (`inventory` module)** — global,
+  converter-less AudioFormat queries with typed results:
+  `decodable_format_ids` / `encodable_format_ids` (the system's
+  decode/encode sets classified through `AudioFormatId`, 50 / 16
+  entries on current macOS), `can_decode` / `can_encode` membership
+  tests, per-format `available_encode_bit_rates` /
+  `available_encode_sample_rates` grids as `AudioValueRange`s, and
+  the per-ASBD packetisation semantics `format_is_vbr` /
+  `format_is_externally_framed`. Feature-independent (`AtError`
+  errors), so `default-features = false` consumers can probe the OS
+  inventory too. 9 hardware tests pin the crate's registration
+  claims against the OS's own inventory: every registered decoder's
+  format appears in the decode set, every registered encoder's in
+  the encode set, and the decode-only AMR-NB / AMR-WB / MP3 (+ Layer
+  I / II) asymmetry is backed by the OS (none appear in the encode
+  set; the AMR-NB encoder-grid query is refused with the classified
+  `'fmt?'` code). Also pinned: the Opus encoder's discrete bit-rate
+  grid, the AAC 44.1 kHz encode rate, the FLAC all-zero
+  "unconstrained" sample-rate wildcard quirk, and that AAC / MP3 /
+  Opus are VBR + externally framed while iLBC / PCM are neither —
+  the empirical basis for which bridges must supply
+  `AudioStreamPacketDescription`s. Selector corrected against the
+  live framework: `kAudioFormatProperty_DecodeFormatIDs` is `'acif'`
+  (the plausible-looking `'acdf'` is rejected with
+  `PropertyNotSupported`).
+
 - **Round 401: converter-property + global AudioFormat sys surface**.
   The `sys` module grows the introspection half of the AudioConverter
   property set — buffer sizing (`'mobs'` / `'cibs'` / `'cobs'`),

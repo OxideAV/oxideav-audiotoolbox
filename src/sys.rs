@@ -246,7 +246,10 @@ pub const K_AUDIO_FORMAT_PROPERTY_ENCODE_FORMAT_IDS: u32 = 0x61636F66; // 'acof'
 
 /// kAudioFormatProperty_DecodeFormatIDs — no specifier; returns the
 /// array of `u32` format IDs the system can decode **from**.
-pub const K_AUDIO_FORMAT_PROPERTY_DECODE_FORMAT_IDS: u32 = 0x61636466; // 'acdf'
+/// (Selector verified against the live framework: `'acif'` responds
+/// with the decode set; the plausible-looking `'acdf'` is rejected
+/// with `PropertyNotSupported`.)
+pub const K_AUDIO_FORMAT_PROPERTY_DECODE_FORMAT_IDS: u32 = 0x61636966; // 'acif'
 
 /// kAudioFormatProperty_AvailableEncodeBitRates — specifier is a
 /// `u32` format ID; returns an array of [`AudioValueRange`].
@@ -1322,7 +1325,7 @@ mod tests {
     fn format_property_fourcc_values() {
         assert_eq!(K_AUDIO_FORMAT_PROPERTY_FORMAT_INFO, be(b"fmti"));
         assert_eq!(K_AUDIO_FORMAT_PROPERTY_ENCODE_FORMAT_IDS, be(b"acof"));
-        assert_eq!(K_AUDIO_FORMAT_PROPERTY_DECODE_FORMAT_IDS, be(b"acdf"));
+        assert_eq!(K_AUDIO_FORMAT_PROPERTY_DECODE_FORMAT_IDS, be(b"acif"));
         assert_eq!(
             K_AUDIO_FORMAT_PROPERTY_AVAILABLE_ENCODE_BIT_RATES,
             be(b"aebr")
