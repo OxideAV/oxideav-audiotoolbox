@@ -43,6 +43,7 @@ pub mod adts;
 pub mod alac;
 pub mod amr;
 pub mod amr_wb;
+pub mod converter;
 pub mod flac;
 pub mod ilbc;
 pub mod mp3;

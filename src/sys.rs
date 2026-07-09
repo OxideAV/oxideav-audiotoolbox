@@ -146,7 +146,13 @@ pub const K_AUDIO_CONVERTER_CALCULATE_INPUT_BUFFER_SIZE: u32 = 0x63696273; // 'c
 /// byte count in, read back the output byte count it will produce.
 pub const K_AUDIO_CONVERTER_CALCULATE_OUTPUT_BUFFER_SIZE: u32 = 0x636F6273; // 'cobs'
 
-/// kAudioConverterCurrentInputStreamDescription
+/// kAudioConverterCurrentInputStreamDescription.
+///
+/// Note: every converter probed on current macOS (encode, decode,
+/// and PCM-to-PCM alike) rejects this selector with
+/// `kAudioConverterErr_PropertyNotSupported`; only the output-side
+/// [`K_AUDIO_CONVERTER_CURRENT_OUTPUT_SD`] responds. Kept for
+/// completeness of the platform constant set.
 pub const K_AUDIO_CONVERTER_CURRENT_INPUT_SD: u32 = 0x61637364; // 'acsd'
 
 /// kAudioConverterCurrentOutputStreamDescription

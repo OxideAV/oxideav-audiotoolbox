@@ -31,6 +31,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   7 unit tests pin the full raw↔variant↔name↔kind table, value
   distinctness, Display rendering, and the core-error mapping.
 
+- **Round 401: safe RAII `Converter` wrapper (`converter` module) +
+  typed `AtError`**. Every codec module drives the converter lifecycle
+  by hand (`AudioConverterNew` → property get/set →
+  `FillComplexBuffer` → `AudioConverterDispose`) with raw `unsafe`
+  calls and manual disposal on each early-exit path. The new
+  `Converter` owns that lifecycle once: construction loads the
+  framework and creates the converter; `Drop` disposes the handle so
+  no code path can leak one; and the typed property surface covers
+  magic cookies (both directions), `max_output_packet_size`, encode
+  bit-rate set/get, the current output stream description,
+  `prime_info`, and the four applicable/available encode
+  bit-rate/sample-rate queries decoded into `AudioValueRange`
+  vectors. Errors flow through the new `status::AtError`
+  (`FrameworkUnavailable` | `Os { op, status }`), which is
+  feature-independent — `default-features = false` consumers get
+  typed errors too — and converts into `oxideav_core::Error` via
+  `From` under the `registry` feature. 11 tests exercise the wrapper
+  against the real framework: create/query/drop + re-create, encode
+  bit-rate round-trip through the codec's applicable set, the AAC
+  sample-rate grid, nonzero AAC priming frames, cookie vending,
+  reset, PCM→PCM pairs, and typed rejection of a bogus format pair.
+  Empirical finding pinned in docs + test: the input-side `'acsd'`
+  current-stream-description selector is rejected with
+  `PropertyNotSupported` by every converter probed on current macOS
+  (encode / decode / PCM-to-PCM alike); only the output-side
+  `'acod'` responds, so the wrapper exposes only
+  `current_output_stream_description`.
+
 - **Round 401: converter-property + global AudioFormat sys surface**.
   The `sys` module grows the introspection half of the AudioConverter
   property set — buffer sizing (`'mobs'` / `'cibs'` / `'cobs'`),

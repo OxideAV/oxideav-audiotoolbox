@@ -403,6 +403,67 @@ impl std::fmt::Display for AtStatus {
     }
 }
 
+/// A failed bridge operation: either the framework could not be
+/// loaded at all, or a named AudioToolbox call returned a non-zero
+/// `OSStatus`.
+///
+/// This is the error type of the feature-independent bridge surface
+/// (the [`Converter`](crate::converter::Converter) wrapper and the
+/// global-format query helpers) — it depends only on `std`, so
+/// `default-features = false` consumers get typed errors too. Under
+/// the `registry` feature it converts into `oxideav_core::Error` via
+/// `From`, following the same [`StatusKind`] mapping as
+/// [`status_error`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AtError {
+    /// The AudioToolbox framework could not be dlopen-ed (older
+    /// macOS, sandbox without the framework, non-mac host). Carries
+    /// the loader's message.
+    FrameworkUnavailable(String),
+    /// A named AudioToolbox call failed with the given status.
+    Os {
+        /// The operation that failed, e.g. `"AudioConverterNew"`.
+        op: &'static str,
+        /// The classified status code.
+        status: AtStatus,
+    },
+}
+
+impl AtError {
+    /// The classified status for `Os` failures, `None` for
+    /// `FrameworkUnavailable`.
+    pub fn status(&self) -> Option<AtStatus> {
+        match self {
+            Self::FrameworkUnavailable(_) => None,
+            Self::Os { status, .. } => Some(*status),
+        }
+    }
+}
+
+impl std::fmt::Display for AtError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FrameworkUnavailable(msg) => write!(f, "AudioToolbox unavailable: {msg}"),
+            Self::Os { op, status } => write!(f, "{op} failed: {status}"),
+        }
+    }
+}
+
+impl std::error::Error for AtError {}
+
+/// `FrameworkUnavailable` maps to `Error::Unsupported` (the
+/// capability is absent on this system; the registry falls back to
+/// the pure-Rust impl); `Os` failures route through [`status_error`].
+#[cfg(feature = "registry")]
+impl From<AtError> for oxideav_core::Error {
+    fn from(e: AtError) -> Self {
+        match e {
+            AtError::FrameworkUnavailable(_) => oxideav_core::Error::unsupported(e.to_string()),
+            AtError::Os { op, status } => status_error(op, status.as_raw()),
+        }
+    }
+}
+
 /// Convert an `(operation, raw status)` failure pair into the
 /// matching [`oxideav_core::Error`] variant, per the
 /// [`StatusKind`] bucket:
