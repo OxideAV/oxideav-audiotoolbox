@@ -12,10 +12,25 @@ This crate is a **thin runtime-loaded bridge** — no compile-time link dependen
 
 ## Fallback behaviour
 
-Two distinct failure paths fall back automatically to the pure-Rust codec:
+Three distinct failure paths fall back automatically to the pure-Rust codec:
 
 1. **Load failure** — older macOS, missing framework, sandboxed environment without AT entitlements. `register()` logs and returns without registering, so the SW codec is the only candidate at dispatch.
-2. **Init failure** — `AudioConverterNew` returns a non-zero `OSStatus` for the requested ASBD. Common triggers: unsupported sample rate / channel layout, encoder bitrate the device doesn't accelerate, hardware codec slot busy (concurrent-converter cap on iOS-class hardware). The factory returns `Err`; the registry retries the next-priority impl (typically the SW one).
+2. **Inventory miss** — `register()` snapshots the OS's own decode/encode format inventory (`inventory::OsInventory`) and registers only the halves the running system actually backs, so the registry never claims a codec slot this macOS lacks. (The probe is optimistic on failure; current systems back every wired slot.)
+3. **Init failure** — `AudioConverterNew` returns a non-zero `OSStatus` for the requested ASBD. Common triggers: unsupported sample rate / channel layout, encoder bitrate the device doesn't accelerate, hardware codec slot busy (concurrent-converter cap on iOS-class hardware). The factory returns a **typed** error — format rejections map to `Error::Unsupported`, so the registry retries the next-priority impl (typically the SW one) instead of aborting.
+
+## Error taxonomy
+
+Every CoreAudio `OSStatus` failure is classified through `status::AtStatus`, which covers all 29 documented codes from the platform SDK's `AudioConverter.h` / `AudioCodec.h` / `AudioFormat.h` / `CoreAudioBaseTypes.h` error enums. Failures render as `kAudioCodecBadDataError ('bada' / 1650549857)` — platform constant name, FourCC, and greppable integer — and map onto the semantically-correct `oxideav_core::Error` variant (`Unsupported` / `InvalidData` / `ResourceExhausted` / `Other`) via `status::status_error`. The feature-independent `status::AtError` type gives `default-features = false` consumers the same typed surface.
+
+## Bridge introspection surface
+
+Beyond the per-codec factories, three feature-independent modules expose the platform surface directly:
+
+* **`converter`** — a safe RAII `Converter` owning the AudioConverter lifecycle (create / property get-set / reset / dispose-on-drop) with a typed property surface: magic cookies in both directions, `max_output_packet_size`, encode bit-rate set/get, the current output stream description, `prime_info` (the AAC encoder-delay figure), and applicable/available encode bit-rate + sample-rate grids decoded into `AudioValueRange`s.
+* **`inventory`** — global, converter-less AudioFormat queries: the OS decode/encode format-ID sets (50 / 16 entries on current macOS, classified through `AudioFormatId`), per-format encoder bit-rate / sample-rate grids, and the `format_is_vbr` / `format_is_externally_framed` packetisation semantics that decide which transports must carry `AudioStreamPacketDescription`s.
+* **`sys`** — the raw FFI layer: runtime symbol resolution, `AudioStreamBasicDescription` constructors for every wired slot plus a pure `validate()` consistency check (all 15 wired compressed constructors both self-validate and are accepted by `AudioConverterNew` on real hardware), the typed `AudioFormatId` classifier, and the converter/format property-ID constant set (each FourCC pinned byte-for-byte by tests; `kAudioFormatProperty_DecodeFormatIDs` verified against the live framework as `'acif'`).
+
+The AAC encoder additionally publishes its edge-priming figures through `output_params().options["priming_frames"]` / `["trailing_frames"]` — the encoder-delay numbers muxers record (MP4 edit lists, gapless metadata) so players can trim the analysis warm-up.
 
 Pipelines that require hardware can opt out of the SW fallback by setting `CodecPreferences { require_hardware: true, .. }` — the registry will then surface the `OSStatus` error instead of degrading silently.
 
@@ -57,7 +72,10 @@ factories. A typed `AudioFormatId` enum classifies any ASBD's raw
 family (`is_aac_family`, `is_lossless`, `is_compressed_audio`), the
 canonical oxideav codec-id string each slot registers under
 (`codec_id_str`), and a printable FourCC for diagnostics
-(`fourcc_str`).
+(`fourcc_str`). The decode-only AMR-NB / AMR-WB / MP3 asymmetry is
+pinned against the OS's own inventory by test: none of the three
+appear in the system encode set, and registration mirrors the
+inventory exactly in both directions.
 
 ## Opt-out
 
