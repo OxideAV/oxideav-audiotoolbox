@@ -298,6 +298,38 @@ impl AacAtEncoder {
         if let Ok(cookie) = read_compression_cookie(fw, converter) {
             out_params.extradata = cookie;
         }
+        // Publish the encoder's edge-priming figures. The AAC encoder
+        // has a nonzero analysis delay: the first output packet
+        // describes PCM from *before* the nominal stream start
+        // (`priming_frames` of it), and container formats record that
+        // figure (MP4 edit lists, gapless-playback metadata) so
+        // players can trim it. Surfaced as options because
+        // `CodecParameters` has no dedicated delay field; muxers read
+        // `options["priming_frames"]` / `options["trailing_frames"]`.
+        {
+            let mut prime = sys::AudioConverterPrimeInfo::default();
+            let mut prop_size = std::mem::size_of::<sys::AudioConverterPrimeInfo>() as u32;
+            let st = unsafe {
+                sys::audio_converter_get_property(
+                    fw,
+                    converter,
+                    sys::K_AUDIO_CONVERTER_PRIME_INFO,
+                    &mut prop_size,
+                    &mut prime as *mut sys::AudioConverterPrimeInfo as *mut c_void,
+                )
+            };
+            // Query failure is non-fatal (the property is
+            // informational); simply omit the options.
+            if st == NO_ERR {
+                out_params
+                    .options
+                    .insert("priming_frames", prime.leading_frames.to_string());
+                out_params
+                    .options
+                    .insert("trailing_frames", prime.trailing_frames.to_string());
+            }
+        }
+
         // Echo the profile back so a downstream decoder can pick the
         // same input ASBD without guessing.
         match profile {
@@ -864,6 +896,31 @@ mod tests {
     /// `output_params.bit_rate` (i.e. the get-property fallback path
     /// never reports zero, which would break downstream muxers that
     /// use this field).
+    #[test]
+    fn output_params_publishes_priming_figures() {
+        // The AAC encoder must surface its edge-priming (encoder
+        // delay) so muxers can record trim metadata. leading is
+        // nonzero for AAC by construction; trailing may be zero.
+        let enc = make_encoder(&params_48k_stereo()).expect("encoder construct");
+        let out = enc.output_params();
+        let priming: u32 = out
+            .options
+            .get("priming_frames")
+            .expect("priming_frames option")
+            .parse()
+            .expect("priming_frames must be an integer");
+        assert!(
+            priming > 0,
+            "AAC encoder priming should be nonzero, got {priming}"
+        );
+        let _trailing: u32 = out
+            .options
+            .get("trailing_frames")
+            .expect("trailing_frames option")
+            .parse()
+            .expect("trailing_frames must be an integer");
+    }
+
     #[test]
     fn output_params_reports_actual_bitrate() {
         let enc = make_encoder(&params_48k_stereo()).expect("encoder construct");

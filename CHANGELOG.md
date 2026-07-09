@@ -123,6 +123,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--no-default-features --all-targets` builds cleanly (previously
   only `--lib` compiled standalone).
 
+- **Round 401: AAC encoder publishes its priming figures**. The
+  encoder queries `kAudioConverterPrimeInfo` at construction and
+  surfaces `options["priming_frames"]` / `options["trailing_frames"]`
+  through `output_params()` — the encoder-delay numbers container
+  formats record (MP4 edit lists, gapless metadata) so players can
+  trim the analysis warm-up. Hardware test asserts the AAC priming
+  is nonzero and both options parse as integers.
+
 - **Round 401: converter-property + global AudioFormat sys surface**.
   The `sys` module grows the introspection half of the AudioConverter
   property set — buffer sizing (`'mobs'` / `'cibs'` / `'cobs'`),
