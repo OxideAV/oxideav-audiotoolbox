@@ -269,17 +269,19 @@ fn he_aac_packets_have_nonzero_payloads() {
     );
     assert!(total_bytes > 0, "no HE-AAC payload bytes emitted");
 
-    // Cookie must be present + must look like an ISO/IEC 14496-1 esds
-    // descriptor (starts with 0x03 = ES_DescrTag).
-    let cookie = &enc.output_params().extradata;
-    assert!(
-        cookie.len() >= 16,
-        "HE-AAC cookie too short: {} bytes",
-        cookie.len()
+    // Extradata is the bare AudioSpecificConfig (ISO/IEC 14496-3
+    // §1.6.2.1) — what MP4 `esds` / Matroska `CodecPrivate` carry — not
+    // AT's ES_Descriptor cookie. HE-AAC signals SBR either explicitly
+    // (AOT 5 / 29 first) or backward-compatibly (AOT 2 + extension).
+    let asc = &enc.output_params().extradata;
+    assert!(asc.len() >= 2, "HE-AAC ASC too short: {} bytes", asc.len());
+    assert_ne!(
+        asc[0], 0x03,
+        "extradata must be the bare ASC, not an ES_Descriptor"
     );
-    assert_eq!(
-        cookie[0], 0x03,
-        "HE-AAC cookie does not start with ES_DescrTag (got 0x{:02x})",
-        cookie[0]
+    let aot = asc[0] >> 3;
+    assert!(
+        matches!(aot, 2 | 5 | 29),
+        "unexpected audioObjectType {aot} in HE-AAC ASC {asc:02x?}"
     );
 }

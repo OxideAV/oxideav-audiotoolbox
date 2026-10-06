@@ -91,7 +91,10 @@ impl AacAtDecoder {
             codec_id: params.codec_id.clone(),
             sample_rate: sr,
             channels: ch,
-            cookie: params.extradata.clone(),
+            // Containers (MP4 `esds`, Matroska `CodecPrivate`) and our
+            // encoders carry the bare AudioSpecificConfig; AT wants it
+            // wrapped in an ES_Descriptor as its magic cookie.
+            cookie: adts::magic_cookie_from_asc(&params.extradata),
             converter: std::ptr::null_mut(),
             pending: Vec::new(),
             pts: 0,

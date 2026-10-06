@@ -140,6 +140,33 @@ pub fn asc_from_magic_cookie(cookie: &[u8]) -> Vec<u8> {
         .unwrap_or_else(|| cookie.to_vec())
 }
 
+/// Wrap a bare AudioSpecificConfig into the MPEG-4 `ES_Descriptor`
+/// form AudioToolbox expects as an AAC *decompression* magic cookie
+/// (the inverse of [`asc_from_magic_cookie`]). Input that already is an
+/// `ES_Descriptor` (first byte `0x03`, which no valid ASC can start
+/// with: it would encode audioObjectType 0) is returned unchanged.
+pub fn magic_cookie_from_asc(asc: &[u8]) -> Vec<u8> {
+    if asc.is_empty() || asc[0] == 0x03 || asc.len() > 0x7f - 20 {
+        return asc.to_vec();
+    }
+    // DecoderSpecificInfo (§7.2.6.7).
+    let mut dsi = vec![0x05, asc.len() as u8];
+    dsi.extend_from_slice(asc);
+    // DecoderConfigDescriptor (§7.2.6.6): objectTypeIndication 0x40
+    // (ISO/IEC 14496-3 audio), streamType 0x05 (audio) << 2 | 1
+    // (reserved bit), bufferSizeDB / maxBitrate / avgBitrate unknown.
+    let mut dcd = vec![0x04, (13 + dsi.len()) as u8, 0x40, 0x15];
+    dcd.extend_from_slice(&[0; 11]);
+    dcd.extend_from_slice(&dsi);
+    // ES_Descriptor (§7.2.6.5): ES_ID 0, no optional fields, then the
+    // DecoderConfigDescriptor and a predefined SLConfigDescriptor.
+    let sl = [0x06, 0x01, 0x02];
+    let mut es = vec![0x03, (3 + dcd.len() + sl.len()) as u8, 0, 0, 0];
+    es.extend_from_slice(&dcd);
+    es.extend_from_slice(&sl);
+    es
+}
+
 /// Read an expandable descriptor size (§8.3.3): up to four bytes, seven
 /// payload bits each, high bit = continuation. Returns (size, bytes used).
 fn descriptor_size(data: &[u8]) -> Option<(usize, usize)> {
@@ -242,6 +269,21 @@ mod tests {
         let mut es = vec![0x03, 0x80, 0x80, 0x80, (3 + dcd.len()) as u8, 0, 1, 0];
         es.extend_from_slice(&dcd);
         assert_eq!(asc_from_magic_cookie(&es), asc);
+    }
+
+    #[test]
+    fn asc_wraps_into_an_es_descriptor_and_back() {
+        for asc in [
+            &[0x12u8, 0x10][..],
+            &[0x2b, 0x92, 0x08, 0x00, 0x56, 0xe5, 0x00],
+        ] {
+            let cookie = magic_cookie_from_asc(asc);
+            assert_eq!(cookie[0], 0x03);
+            assert_eq!(asc_from_magic_cookie(&cookie), asc);
+            // Already-wrapped input is left alone.
+            assert_eq!(magic_cookie_from_asc(&cookie), cookie);
+        }
+        assert!(magic_cookie_from_asc(&[]).is_empty());
     }
 
     #[test]
