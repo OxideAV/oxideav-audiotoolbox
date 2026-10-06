@@ -3,7 +3,7 @@
 //! Generates 2 seconds of 48 kHz / 16-bit stereo PCM containing a 440 Hz
 //! sine plus a deterministic pseudo-random low-amplitude perturbation,
 //! encodes it through `FlacAtEncoder`, then forwards the resulting raw
-//! FLAC packets + encoder-vended `dfLa` magic cookie into
+//! FLAC packets + encoder-published metadata chain (extradata) into
 //! `FlacAtDecoder`, and verifies the recovered PCM matches the input
 //! **bit-for-bit** after accounting for any priming-silence head shift.
 //!
@@ -122,7 +122,7 @@ fn flac_roundtrip_bit_exact() {
 
     assert!(!flac_packets.is_empty(), "no FLAC packets produced");
 
-    // Grab the encoder-vended `dfLa` magic cookie before dropping `enc`.
+    // Grab the encoder's extradata (metadata-block chain) before dropping `enc`.
     let cookie = enc.output_params().extradata.clone();
     assert!(!cookie.is_empty(), "encoder did not vend a magic cookie");
 

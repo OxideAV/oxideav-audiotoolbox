@@ -487,8 +487,72 @@ impl FrameHeader {
     }
 }
 
+/// The FLAC metadata-block chain carried inside a `dfLa` cookie (the
+/// bytes after the box and FullBox headers), i.e. the framework's
+/// `CodecParameters::extradata` convention for FLAC (RFC 9639 §8:
+/// metadata blocks without the `fLaC` signature). `None` when `cookie`
+/// is not a well-formed `dfLa` box.
+pub fn metadata_blocks_from_cookie(cookie: &[u8]) -> Option<Vec<u8>> {
+    if cookie.len() < BOX_HEADER_LEN + FULLBOX_HEADER_LEN || cookie[4..8] != DFLA_BOX_TYPE {
+        return None;
+    }
+    let box_size = u32::from_be_bytes([cookie[0], cookie[1], cookie[2], cookie[3]]) as usize;
+    let end = box_size.min(cookie.len());
+    let start = BOX_HEADER_LEN + FULLBOX_HEADER_LEN;
+    (end > start).then(|| cookie[start..end].to_vec())
+}
+
+/// STREAMINFO from a framework-convention FLAC extradata: a metadata
+/// block chain, optionally preceded by the `fLaC` signature, whose
+/// first block is STREAMINFO (RFC 9639 §8.2). `None` otherwise.
+pub fn stream_info_from_metadata_blocks(extradata: &[u8]) -> Option<StreamInfo> {
+    let blocks = extradata.strip_prefix(&FLAC_SIGNATURE).unwrap_or(extradata);
+    if blocks.len() < METADATA_BLOCK_HEADER_LEN + STREAMINFO_BODY_LEN {
+        return None;
+    }
+    let header = u32::from_be_bytes([blocks[0], blocks[1], blocks[2], blocks[3]]);
+    let block_type = (header >> 24) & 0x7f;
+    let length = (header & 0x00ff_ffff) as usize;
+    if block_type != 0 || length != STREAMINFO_BODY_LEN {
+        return None;
+    }
+    StreamInfo::parse(&blocks[METADATA_BLOCK_HEADER_LEN..][..STREAMINFO_BODY_LEN])
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cookie_blocks_round_trip_with_the_framework_convention() {
+        let info = StreamInfo::parse(&{
+            let mut b = [0u8; STREAMINFO_BODY_LEN];
+            b[0..2].copy_from_slice(&4096u16.to_be_bytes());
+            b[2..4].copy_from_slice(&4096u16.to_be_bytes());
+            // 48000 Hz, 2 ch, 16 bit: sample rate (20) | ch-1 (3) | bps-1 (5).
+            let packed: u32 = (48_000 << 12) | (1 << 9) | (15 << 4);
+            b[10..14].copy_from_slice(&packed.to_be_bytes());
+            b
+        })
+        .expect("streaminfo");
+        let cookie = build_magic_cookie(&info);
+        let blocks = metadata_blocks_from_cookie(&cookie).expect("dfLa unwraps");
+        assert_eq!(
+            blocks.len(),
+            METADATA_BLOCK_HEADER_LEN + STREAMINFO_BODY_LEN
+        );
+        let back = stream_info_from_metadata_blocks(&blocks).expect("chain parses");
+        assert_eq!((back.sample_rate, back.channels), (48_000, 2));
+        // With the fLaC signature and a trailing PADDING block too.
+        let mut with_sig = FLAC_SIGNATURE.to_vec();
+        let mut first = blocks.clone();
+        first[0] &= 0x7f; // not last any more
+        with_sig.extend_from_slice(&first);
+        with_sig.extend_from_slice(&[0x81, 0, 0, 2, 0, 0]);
+        let back = stream_info_from_metadata_blocks(&with_sig).expect("chain parses");
+        assert_eq!(back.sample_rate, 48_000);
+        assert!(metadata_blocks_from_cookie(&blocks).is_none());
+        assert!(stream_info_from_metadata_blocks(&cookie).is_none());
+    }
+
     use super::*;
 
     fn sample_streaminfo() -> StreamInfo {

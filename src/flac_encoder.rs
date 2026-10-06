@@ -247,7 +247,10 @@ impl FlacAtEncoder {
         out_params.sample_rate = Some(sr);
         out_params.channels = Some(ch);
         out_params.sample_format = Some(sample_format);
-        out_params.extradata = cookie;
+        // Publish the framework convention for FLAC extradata (the
+        // metadata-block chain, as the FLAC / Matroska / Ogg muxers
+        // expect), not AT's `dfLa` box around it.
+        out_params.extradata = flac::metadata_blocks_from_cookie(&cookie).unwrap_or(cookie);
 
         Ok(Self {
             codec_id: params.codec_id.clone(),
@@ -546,32 +549,18 @@ mod tests {
     }
 
     #[test]
-    fn encoder_publishes_dfla_magic_cookie() {
+    fn encoder_publishes_flac_metadata_chain() {
         let enc = make_encoder(&params_flac_48k_stereo()).expect("make_encoder");
-        let cookie = &enc.output_params().extradata;
-        assert!(
-            cookie.len() >= flac::MAGIC_COOKIE_MIN_LEN,
-            "cookie too short: {} bytes (need at least {})",
-            cookie.len(),
-            flac::MAGIC_COOKIE_MIN_LEN
+        let extradata = &enc.output_params().extradata;
+        // Framework convention: a STREAMINFO-led metadata-block chain
+        // (what the FLAC / Matroska / Ogg muxers expect), not AT's
+        // `dfLa` box around it.
+        assert_ne!(
+            extradata.get(4..8),
+            Some(b"dfLa".as_slice()),
+            "extradata must be unwrapped from the dfLa box"
         );
-        assert!(
-            cookie.len() <= flac::MAGIC_COOKIE_MAX_LEN,
-            "cookie exceeds AT max: {} bytes",
-            cookie.len()
-        );
-        // Box type at offset 4..8 must be 'dfLa' (whether the cookie
-        // came from AT itself or our synthesised fallback). The decoder
-        // round-trips it via parse_magic_cookie which validates this
-        // exact byte pattern.
-        assert_eq!(
-            &cookie[4..8],
-            b"dfLa",
-            "cookie box type must be 'dfLa' (Xiph FLAC-in-ISOBMFF specific box)"
-        );
-        // Cookie must round-trip through parse_magic_cookie back to a
-        // StreamInfo with the configured sample rate and channel count.
-        let info = flac::parse_magic_cookie(cookie).expect("cookie parses");
+        let info = flac::stream_info_from_metadata_blocks(extradata).expect("chain parses");
         assert_eq!(info.sample_rate, 48_000);
         assert_eq!(info.channels, 2);
         assert_eq!(info.bits_per_sample, 16);
@@ -596,8 +585,8 @@ mod tests {
         let mut p = params_flac_48k_stereo();
         p.sample_format = Some(SampleFormat::S32);
         let enc = make_encoder(&p).expect("make_encoder S32");
-        let cookie = &enc.output_params().extradata;
-        let info = flac::parse_magic_cookie(cookie).expect("cookie parses");
+        let extradata = &enc.output_params().extradata;
+        let info = flac::stream_info_from_metadata_blocks(extradata).expect("chain parses");
         assert_eq!(
             info.bits_per_sample, 24,
             "S32 input must produce a 24-bit STREAMINFO bit_depth (AT cap)"

@@ -356,13 +356,21 @@ impl Decoder for FlacAtDecoder {
 /// or rely on the explicit `sample_rate / channels / sample_format`
 /// fields if they didn't have a cookie to forward.
 fn resolve_cookie_and_info(params: &CodecParameters) -> Result<(Vec<u8>, StreamInfo)> {
+    // A `dfLa` cookie (e.g. from AudioToolbox itself): use verbatim.
+    if let Some(info) = flac::parse_magic_cookie(&params.extradata) {
+        return Ok((params.extradata.clone(), info));
+    }
+    // The framework convention (FLAC / Matroska / Ogg demuxers and the
+    // pure-Rust encoder): a metadata-block chain, optionally behind the
+    // `fLaC` signature. AT only needs STREAMINFO, so build a minimal
+    // cookie from it (keeps large VORBIS_COMMENT / PICTURE blocks out
+    // of AT's cookie-size limit).
+    if let Some(info) = flac::stream_info_from_metadata_blocks(&params.extradata) {
+        return Ok((flac::build_magic_cookie(&info), info));
+    }
     if params.extradata.len() >= MAGIC_COOKIE_MIN_LEN {
-        // Treat as a full cookie / .flac prefix.
-        if let Some(info) = flac::parse_magic_cookie(&params.extradata) {
-            return Ok((params.extradata.clone(), info));
-        }
         return Err(Error::invalid(
-            "FLAC: extradata is large enough for a cookie but failed to parse",
+            "FLAC: extradata is neither a dfLa cookie nor a STREAMINFO-led metadata chain",
         ));
     }
     if params.extradata.len() == STREAMINFO_BODY_LEN {
