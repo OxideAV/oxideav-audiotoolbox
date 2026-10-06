@@ -290,13 +290,13 @@ impl AacAtEncoder {
         out_params.sample_rate = Some(sr);
         out_params.channels = Some(ch as u16);
         out_params.bit_rate = Some(actual_bitrate as u64);
-        // Publish the encoder-vended magic cookie via extradata so a
-        // downstream HE-AAC decoder can configure its SBR / PS path.
-        // AT's AAC LC cookie is typically the bare AudioSpecificConfig
-        // (2 bytes); HE / HE-v2 cookies embed the AOT extension and
-        // are typically 24-42 bytes.
+        // Publish the AudioSpecificConfig via extradata so muxers can
+        // write `esds` / `CodecPrivate` and decoders can configure the
+        // SBR / PS path. AT vends its AAC cookie as an MPEG-4
+        // ES_Descriptor wrapping the ASC; downstream consumers expect
+        // the bare ASC, so unwrap it.
         if let Ok(cookie) = read_compression_cookie(fw, converter) {
-            out_params.extradata = cookie;
+            out_params.extradata = adts::asc_from_magic_cookie(&cookie);
         }
         // Publish the encoder's edge-priming figures. The AAC encoder
         // has a nonzero analysis delay: the first output packet
@@ -730,9 +730,9 @@ unsafe extern "C" fn pcm_input_callback(
 }
 
 /// Read the encoder-vended magic cookie via the (size-query, value-fetch)
-/// two-step. Returns the bytes verbatim. For AAC LC the cookie is the
-/// 2-byte AudioSpecificConfig; for HE / HE-v2 it embeds the AOT
-/// extension descriptor as well.
+/// two-step. Returns the bytes verbatim: for AAC an MPEG-4
+/// ES_Descriptor wrapping the AudioSpecificConfig (see
+/// [`adts::asc_from_magic_cookie`]).
 fn read_compression_cookie(fw: &sys::Framework, converter: AudioConverterRef) -> Result<Vec<u8>> {
     let mut size: u32 = 0;
     let mut writable: u8 = 0;

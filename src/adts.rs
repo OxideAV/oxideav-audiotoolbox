@@ -118,9 +118,139 @@ pub fn build_header(payload_len: usize, sf_index: u8, channel_config: u8, profil
     [b0, b1, b2, b3, b4, b5, b6]
 }
 
+/// Extract the bare AudioSpecificConfig from an AudioToolbox AAC
+/// "magic cookie".
+///
+/// AT vends the AAC compression cookie as an MPEG-4 `ES_Descriptor`
+/// (ISO/IEC 14496-1 §7.2.6.5: tag `0x03` → `DecoderConfigDescriptor`
+/// tag `0x04` → `DecoderSpecificInfo` tag `0x05`, whose payload is the
+/// AudioSpecificConfig of ISO/IEC 14496-3 §1.6.2.1), sometimes still
+/// wrapped in an `esds` atom (size + `esds` + version/flags). Consumers
+/// of `CodecParameters::extradata` (the MP4 / Matroska muxers, the AAC
+/// decoder) expect the bare AudioSpecificConfig, so unwrap it here.
+/// Input that is not descriptor-wrapped is returned unchanged.
+pub fn asc_from_magic_cookie(cookie: &[u8]) -> Vec<u8> {
+    let body = if cookie.len() >= 12 && &cookie[4..8] == b"esds" {
+        &cookie[12..]
+    } else {
+        cookie
+    };
+    find_decoder_specific_info(body, 0)
+        .map(<[u8]>::to_vec)
+        .unwrap_or_else(|| cookie.to_vec())
+}
+
+/// Read an expandable descriptor size (§8.3.3): up to four bytes, seven
+/// payload bits each, high bit = continuation. Returns (size, bytes used).
+fn descriptor_size(data: &[u8]) -> Option<(usize, usize)> {
+    let mut size = 0usize;
+    for (i, &b) in data.iter().take(4).enumerate() {
+        size = (size << 7) | usize::from(b & 0x7f);
+        if b & 0x80 == 0 {
+            return Some((size, i + 1));
+        }
+    }
+    None
+}
+
+/// Walk the descriptor at the start of `data` (and its children) down to
+/// the first `DecoderSpecificInfo` payload.
+fn find_decoder_specific_info(data: &[u8], depth: u8) -> Option<&[u8]> {
+    if depth > 4 {
+        return None;
+    }
+    let (&tag, rest) = data.split_first()?;
+    let (len, used) = descriptor_size(rest)?;
+    let payload = rest.get(used..used.checked_add(len)?)?;
+    match tag {
+        0x05 => Some(payload),
+        0x04 => {
+            // objectTypeIndication, streamType byte, bufferSizeDB (24 bits),
+            // maxBitrate, avgBitrate: 13 bytes before the children.
+            find_decoder_specific_info(payload.get(13..)?, depth + 1)
+        }
+        0x03 => {
+            // ES_ID (16 bits) + flags byte, then the optional fields the
+            // flags announce.
+            let flags = *payload.get(2)?;
+            let mut at = 3usize;
+            if flags & 0x80 != 0 {
+                at += 2; // dependsOn_ES_ID
+            }
+            if flags & 0x40 != 0 {
+                at += 1 + usize::from(*payload.get(at)?); // URL
+            }
+            if flags & 0x20 != 0 {
+                at += 2; // OCR_ES_Id
+            }
+            let mut children = payload.get(at..)?;
+            while !children.is_empty() {
+                if let Some(dsi) = find_decoder_specific_info(children, depth + 1) {
+                    return Some(dsi);
+                }
+                let (len, used) = descriptor_size(children.get(1..)?)?;
+                children = children.get(1 + used + len..)?;
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ES_Descriptor around a 2-byte AAC-LC 44.1 kHz stereo ASC, as
+    /// AudioToolbox vends it.
+    fn es_descriptor(asc: &[u8], wrap_in_esds_atom: bool) -> Vec<u8> {
+        let mut dsi = vec![0x05, asc.len() as u8];
+        dsi.extend_from_slice(asc);
+        let mut dcd = vec![0x04, (13 + dsi.len()) as u8, 0x40, 0x15, 0, 0, 0];
+        dcd.extend_from_slice(&[0, 1, 0xf4, 0, 0, 1, 0xf4, 0]);
+        dcd.extend_from_slice(&dsi);
+        let mut es = vec![0x03, (3 + dcd.len() + 3) as u8, 0, 0, 0];
+        es.extend_from_slice(&dcd);
+        es.extend_from_slice(&[0x06, 1, 2]); // SLConfigDescriptor
+        if wrap_in_esds_atom {
+            let mut atom = ((12 + es.len()) as u32).to_be_bytes().to_vec();
+            atom.extend_from_slice(b"esds");
+            atom.extend_from_slice(&[0, 0, 0, 0]);
+            atom.extend_from_slice(&es);
+            atom
+        } else {
+            es
+        }
+    }
+
+    #[test]
+    fn magic_cookie_es_descriptor_unwraps_to_asc() {
+        let asc = [0x12, 0x10];
+        assert_eq!(asc_from_magic_cookie(&es_descriptor(&asc, false)), asc);
+        assert_eq!(asc_from_magic_cookie(&es_descriptor(&asc, true)), asc);
+    }
+
+    #[test]
+    fn magic_cookie_with_long_form_sizes_and_he_asc() {
+        // HE-AAC v2 explicit-signalling ASC, sizes in 4-byte form.
+        let asc = [0x2b, 0x92, 0x08, 0x00, 0x56, 0xe5, 0x00];
+        let mut dsi = vec![0x05, 0x80, 0x80, 0x80, asc.len() as u8];
+        dsi.extend_from_slice(&asc);
+        let mut dcd = vec![0x04, 0x80, 0x80, 0x80, (13 + dsi.len()) as u8];
+        dcd.extend_from_slice(&[0x40, 0x15, 0, 0, 0, 0, 1, 0xf4, 0, 0, 1, 0xf4, 0]);
+        dcd.extend_from_slice(&dsi);
+        let mut es = vec![0x03, 0x80, 0x80, 0x80, (3 + dcd.len()) as u8, 0, 1, 0];
+        es.extend_from_slice(&dcd);
+        assert_eq!(asc_from_magic_cookie(&es), asc);
+    }
+
+    #[test]
+    fn bare_asc_and_garbage_pass_through() {
+        assert_eq!(asc_from_magic_cookie(&[0x12, 0x10]), [0x12, 0x10]);
+        let truncated = [0x03, 0x20, 0x00];
+        assert_eq!(asc_from_magic_cookie(&truncated), truncated);
+        assert!(asc_from_magic_cookie(&[]).is_empty());
+    }
 
     #[test]
     fn roundtrip_header() {
