@@ -41,7 +41,7 @@ use oxideav_core::{
     CodecId, CodecParameters, Error, Frame, Packet, Result, SampleFormat, TimeBase,
 };
 
-use crate::opus::{self, OpusHead, DEFAULT_FRAME_DURATION_MS, DEFAULT_PRE_SKIP};
+use crate::opus::{self, OpusHead, DEFAULT_FRAME_DURATION_MS};
 use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
@@ -216,10 +216,21 @@ impl OpusAtEncoder {
         // converter accepted the encoder configuration, but do not
         // forward it to consumers (its layout is AT-internal).
         let _ = read_compression_cookie(fw, converter);
+        // Pre-skip (RFC 7845 §4.2) must equal the encoder's actual
+        // start-up delay, in 48 kHz samples: decoders discard exactly
+        // that much. AT reports the delay as the converter's leading
+        // (priming) frames at the input rate. When the query fails we
+        // trim nothing rather than guess: a too-large pre-skip (the
+        // old fixed 3840 = 80 ms) cuts real audio off the start.
+        let prime = read_prime_info(fw, converter);
+        let pre_skip = prime.map_or(0, |p| {
+            let at_48k = (u64::from(p.leading_frames) * 48_000).div_ceil(u64::from(sr.max(1)));
+            u16::try_from(at_48k).unwrap_or(u16::MAX)
+        });
         let cookie = OpusHead {
             version: 1,
             channels: ch as u8,
-            pre_skip: DEFAULT_PRE_SKIP,
+            pre_skip,
             input_sample_rate: sr,
             output_gain: 0,
             mapping_family: 0,
@@ -236,6 +247,14 @@ impl OpusAtEncoder {
         out_params
             .options
             .insert("frame_duration_ms", format!("{duration_ms}"));
+        if let Some(p) = prime {
+            out_params
+                .options
+                .insert("priming_frames", p.leading_frames.to_string());
+            out_params
+                .options
+                .insert("trailing_frames", p.trailing_frames.to_string());
+        }
 
         Ok(Self {
             codec_id: params.codec_id.clone(),
@@ -397,6 +416,26 @@ impl Encoder for OpusAtEncoder {
         self.eof = true;
         Ok(())
     }
+}
+
+/// The converter's edge-priming figures (`kAudioConverterPrimeInfo`);
+/// `None` when AT does not report them.
+fn read_prime_info(
+    fw: &sys::Framework,
+    converter: AudioConverterRef,
+) -> Option<sys::AudioConverterPrimeInfo> {
+    let mut prime = sys::AudioConverterPrimeInfo::default();
+    let mut size = std::mem::size_of::<sys::AudioConverterPrimeInfo>() as u32;
+    let status = unsafe {
+        sys::audio_converter_get_property(
+            fw,
+            converter,
+            sys::K_AUDIO_CONVERTER_PRIME_INFO,
+            &mut size,
+            &mut prime as *mut sys::AudioConverterPrimeInfo as *mut c_void,
+        )
+    };
+    (status == NO_ERR).then_some(prime)
 }
 
 /// Read the encoder-vended magic cookie via two property calls (size
@@ -572,6 +611,15 @@ mod tests {
             opus::MAGIC,
             "cookie must start with the OpusHead magic signature"
         );
+        // Pre-skip mirrors the converter's reported priming (48 kHz
+        // units here), never the old fixed 80 ms.
+        let head = OpusHead::from_bytes(cookie).expect("OpusHead parses");
+        let priming: u32 = enc
+            .output_params()
+            .options
+            .get("priming_frames")
+            .map_or(0, |v| v.parse().unwrap());
+        assert_eq!(u32::from(head.pre_skip), priming);
     }
 
     #[test]
