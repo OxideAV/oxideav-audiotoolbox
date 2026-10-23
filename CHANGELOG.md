@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - edition 2024, MSRV 1.95.
+- **Loader: `dlsym` replaces `libloading`.** AudioToolbox and
+  CoreFoundation are opened with Karpelès Lab's `dlsym` crate, and the
+  nine AudioToolbox entry points (`AudioConverter{New,Dispose,Reset,
+  SetProperty,GetProperty,GetPropertyInfo,FillComplexBuffer}`,
+  `AudioFormatGetProperty{,Info}`) plus `CFRetain` / `CFRelease` are
+  declared through `dlsym::library!` as `sys::AudioToolbox` /
+  `sys::CoreFoundation`: every symbol is resolved once at first use
+  and stored next to the owning library, so a call is a constant-index
+  load with no per-call symbol lookup and no `expect` on a missing
+  symbol. `sys::Framework` keeps its `audio_toolbox` /
+  `core_foundation` fields but they are now those binding structs
+  (was `libloading::Library`); it is `#[non_exhaustive]`. The
+  `sys::audio_converter_*` / `audio_format_*` wrappers and
+  `sys::framework()` are unchanged; a missing symbol now surfaces as
+  the cached `framework()` error string (`AtError::FrameworkUnavailable`
+  downstream) instead of a panic at the first call.
 - **Round 401: every `OSStatus` failure site routed through the typed
   taxonomy** (13 codec modules, 38 sites). All
   `Error::other(format!("... failed: OSStatus {status}"))` sites in

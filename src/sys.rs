@@ -1,10 +1,12 @@
 //! Runtime-loaded AudioToolbox + supporting framework handles.
 //!
 //! Loaded once via `OnceLock` on first use and cached for the process
-//! lifetime. If any framework fails to dlopen the cache stores the
+//! lifetime. The frameworks are opened with [`dlsym`] and every entry
+//! point is resolved up front through [`dlsym::library!`]; if any
+//! framework fails to dlopen (or lacks a symbol) the cache stores the
 //! error so subsequent calls don't repeatedly hammer dyld.
 
-use libloading::Library;
+use dlsym::Bindings;
 use std::sync::OnceLock;
 
 // ──────────────────────────── CoreAudio types ────────────────────────────
@@ -1112,10 +1114,111 @@ pub struct AudioConverterPrimeInfo {
 
 // ─────────────────────────────── Framework ───────────────────────────────
 
-/// Handles to the frameworks the AT bridge needs.
+/// On-disk path of the AudioToolbox framework binary.
+const AUDIO_TOOLBOX_PATH: &str = "/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox";
+/// On-disk path of the CoreFoundation framework binary.
+const CORE_FOUNDATION_PATH: &str =
+    "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+
+dlsym::library! {
+    /// The AudioToolbox entry points the bridge calls, resolved once
+    /// when the framework is opened.
+    ///
+    /// Declared with [`dlsym::library!`]: every function pointer lives
+    /// inside this struct next to the owning [`dlsym::Library`], so it
+    /// cannot outlive the mapping it points into, and a call is a
+    /// constant-index load plus the call itself — no per-call `dlsym`.
+    /// All nine entry points have shipped in every AudioToolbox since
+    /// the AudioConverter API was introduced, so none is `#[optional]`:
+    /// a missing symbol is a load-time error surfaced through
+    /// [`framework`], not a runtime probe.
+    pub struct AudioToolbox {
+        unsafe extern "C" {
+            /// `AudioConverterNew(inSourceFormat, inDestinationFormat, outAudioConverter)`.
+            pub fn AudioConverterNew(
+                in_source_format: *const AudioStreamBasicDescription,
+                in_dest_format: *const AudioStreamBasicDescription,
+                out_audio_converter: *mut AudioConverterRef,
+            ) -> OSStatus;
+            /// `AudioConverterDispose(inAudioConverter)`.
+            pub fn AudioConverterDispose(converter: AudioConverterRef) -> OSStatus;
+            /// `AudioConverterReset(inAudioConverter)`.
+            pub fn AudioConverterReset(converter: AudioConverterRef) -> OSStatus;
+            /// `AudioConverterSetProperty(inAudioConverter, inPropertyID, inPropertyDataSize, inPropertyData)`.
+            pub fn AudioConverterSetProperty(
+                converter: AudioConverterRef,
+                in_property_id: u32,
+                in_data_size: u32,
+                in_data: *const std::ffi::c_void,
+            ) -> OSStatus;
+            /// `AudioConverterGetProperty(inAudioConverter, inPropertyID, ioPropertyDataSize, outPropertyData)`.
+            pub fn AudioConverterGetProperty(
+                converter: AudioConverterRef,
+                in_property_id: u32,
+                io_data_size: *mut u32,
+                out_data: *mut std::ffi::c_void,
+            ) -> OSStatus;
+            /// `AudioConverterGetPropertyInfo(inAudioConverter, inPropertyID, outSize, outWritable)`.
+            pub fn AudioConverterGetPropertyInfo(
+                converter: AudioConverterRef,
+                in_property_id: u32,
+                out_size: *mut u32,
+                out_writable: *mut u8,
+            ) -> OSStatus;
+            /// `AudioConverterFillComplexBuffer(inAudioConverter, inInputDataProc, inInputDataProcUserData, ioOutputDataPacketSize, outOutputData, outPacketDescription)`.
+            pub fn AudioConverterFillComplexBuffer(
+                converter: AudioConverterRef,
+                in_input_data_proc: AudioConverterInputDataProc,
+                in_input_data_proc_user_data: *mut std::ffi::c_void,
+                io_output_data_packet_size: *mut u32,
+                out_output_data: *mut AudioBufferList1,
+                out_packet_description: *mut AudioStreamPacketDescription,
+            ) -> OSStatus;
+            /// `AudioFormatGetPropertyInfo(inPropertyID, inSpecifierSize, inSpecifier, outPropertyDataSize)`.
+            pub fn AudioFormatGetPropertyInfo(
+                in_property_id: u32,
+                in_specifier_size: u32,
+                in_specifier: *const std::ffi::c_void,
+                out_property_data_size: *mut u32,
+            ) -> OSStatus;
+            /// `AudioFormatGetProperty(inPropertyID, inSpecifierSize, inSpecifier, ioPropertyDataSize, outPropertyData)`.
+            pub fn AudioFormatGetProperty(
+                in_property_id: u32,
+                in_specifier_size: u32,
+                in_specifier: *const std::ffi::c_void,
+                io_property_data_size: *mut u32,
+                out_property_data: *mut std::ffi::c_void,
+            ) -> OSStatus;
+        }
+    }
+}
+
+dlsym::library! {
+    /// The CoreFoundation entry points the bridge keeps resolved.
+    ///
+    /// AudioToolbox hands out CoreFoundation-managed objects for some
+    /// property queries; the retain / release pair is resolved
+    /// alongside the converter surface so a future caller never has
+    /// to go back to the loader.
+    pub struct CoreFoundation {
+        unsafe extern "C" {
+            /// `CFRetain(cf)`.
+            pub fn CFRetain(cf: *const std::ffi::c_void) -> *const std::ffi::c_void;
+            /// `CFRelease(cf)`.
+            pub fn CFRelease(cf: *const std::ffi::c_void);
+        }
+    }
+}
+
+/// Handles to the frameworks the AT bridge needs, with every entry
+/// point already resolved.
+#[derive(Debug)]
+#[non_exhaustive]
 pub struct Framework {
-    pub audio_toolbox: Library,
-    pub core_foundation: Library,
+    /// AudioToolbox: the converter + global format-query surface.
+    pub audio_toolbox: AudioToolbox,
+    /// CoreFoundation: object retain / release.
+    pub core_foundation: CoreFoundation,
 }
 
 /// Process-wide cache. `OnceLock` so concurrent first calls collapse
@@ -1129,19 +1232,19 @@ pub fn framework() -> Result<&'static Framework, &'static str> {
 }
 
 fn load() -> Result<Framework, String> {
-    let audio_toolbox = open("/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox")?;
-    let core_foundation =
-        open("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")?;
+    // SAFETY: dlopen on fixed system framework paths with no init
+    // callbacks; equivalent to a normal program startup load. The
+    // `unsafe extern` blocks above assert the signatures of every
+    // symbol resolved on the way.
+    let audio_toolbox = unsafe { AudioToolbox::open(AUDIO_TOOLBOX_PATH) }
+        .map_err(|e| format!("dlopen {AUDIO_TOOLBOX_PATH}: {e}"))?;
+    // SAFETY: as above.
+    let core_foundation = unsafe { CoreFoundation::open(CORE_FOUNDATION_PATH) }
+        .map_err(|e| format!("dlopen {CORE_FOUNDATION_PATH}: {e}"))?;
     Ok(Framework {
         audio_toolbox,
         core_foundation,
     })
-}
-
-fn open(path: &str) -> Result<Library, String> {
-    // SAFETY: dlopen on a fixed system framework path with no init
-    // callbacks; equivalent to a normal program startup load.
-    unsafe { Library::new(path) }.map_err(|e| format!("dlopen {path}: {e}"))
 }
 
 // ─────────────────────────── Typed FFI wrappers ──────────────────────────
@@ -1167,7 +1270,7 @@ pub type AudioConverterInputDataProc = unsafe extern "C" fn(
     user_data: *mut std::ffi::c_void,
 ) -> OSStatus;
 
-/// Thin wrapper that resolves and calls `AudioConverterNew`.
+/// Thin wrapper that calls the pre-resolved `AudioConverterNew`.
 ///
 /// # Safety
 /// All pointer arguments must satisfy the documented CoreAudio conventions.
@@ -1178,16 +1281,8 @@ pub unsafe fn audio_converter_new(
     out_audio_converter: *mut AudioConverterRef,
 ) -> OSStatus {
     unsafe {
-        type Fn = unsafe extern "C" fn(
-            *const AudioStreamBasicDescription,
-            *const AudioStreamBasicDescription,
-            *mut AudioConverterRef,
-        ) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioConverterNew\0")
-            .expect("AudioConverterNew not found");
-        f(in_source_format, in_dest_format, out_audio_converter)
+        fw.audio_toolbox
+            .AudioConverterNew(in_source_format, in_dest_format, out_audio_converter)
     }
 }
 
@@ -1196,14 +1291,7 @@ pub unsafe fn audio_converter_new(
 /// # Safety
 /// `converter` must be a valid AudioConverterRef obtained from `AudioConverterNew`.
 pub unsafe fn audio_converter_dispose(fw: &Framework, converter: AudioConverterRef) -> OSStatus {
-    unsafe {
-        type Fn = unsafe extern "C" fn(AudioConverterRef) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioConverterDispose\0")
-            .expect("AudioConverterDispose not found");
-        f(converter)
-    }
+    unsafe { fw.audio_toolbox.AudioConverterDispose(converter) }
 }
 
 /// Thin wrapper for `AudioConverterReset`.
@@ -1211,14 +1299,7 @@ pub unsafe fn audio_converter_dispose(fw: &Framework, converter: AudioConverterR
 /// # Safety
 /// `converter` must be a valid AudioConverterRef.
 pub unsafe fn audio_converter_reset(fw: &Framework, converter: AudioConverterRef) -> OSStatus {
-    unsafe {
-        type Fn = unsafe extern "C" fn(AudioConverterRef) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioConverterReset\0")
-            .expect("AudioConverterReset not found");
-        f(converter)
-    }
+    unsafe { fw.audio_toolbox.AudioConverterReset(converter) }
 }
 
 /// Thin wrapper for `AudioConverterSetProperty`.
@@ -1234,13 +1315,8 @@ pub unsafe fn audio_converter_set_property(
     in_data: *const std::ffi::c_void,
 ) -> OSStatus {
     unsafe {
-        type Fn =
-            unsafe extern "C" fn(AudioConverterRef, u32, u32, *const std::ffi::c_void) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioConverterSetProperty\0")
-            .expect("AudioConverterSetProperty not found");
-        f(converter, in_property_id, in_data_size, in_data)
+        fw.audio_toolbox
+            .AudioConverterSetProperty(converter, in_property_id, in_data_size, in_data)
     }
 }
 
@@ -1256,17 +1332,12 @@ pub unsafe fn audio_converter_get_property(
     out_data: *mut std::ffi::c_void,
 ) -> OSStatus {
     unsafe {
-        type Fn = unsafe extern "C" fn(
-            AudioConverterRef,
-            u32,
-            *mut u32,
-            *mut std::ffi::c_void,
-        ) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioConverterGetProperty\0")
-            .expect("AudioConverterGetProperty not found");
-        f(converter, in_property_id, io_data_size, out_data)
+        fw.audio_toolbox.AudioConverterGetProperty(
+            converter,
+            in_property_id,
+            io_data_size,
+            out_data,
+        )
     }
 }
 
@@ -1283,12 +1354,12 @@ pub unsafe fn audio_converter_get_property_info(
     out_writable: *mut u8,
 ) -> OSStatus {
     unsafe {
-        type Fn = unsafe extern "C" fn(AudioConverterRef, u32, *mut u32, *mut u8) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioConverterGetPropertyInfo\0")
-            .expect("AudioConverterGetPropertyInfo not found");
-        f(converter, in_property_id, out_size, out_writable)
+        fw.audio_toolbox.AudioConverterGetPropertyInfo(
+            converter,
+            in_property_id,
+            out_size,
+            out_writable,
+        )
     }
 }
 
@@ -1306,19 +1377,7 @@ pub unsafe fn audio_converter_fill_complex_buffer(
     out_packet_description: *mut AudioStreamPacketDescription,
 ) -> OSStatus {
     unsafe {
-        type Fn = unsafe extern "C" fn(
-            AudioConverterRef,
-            AudioConverterInputDataProc,
-            *mut std::ffi::c_void,
-            *mut u32,
-            *mut AudioBufferList1,
-            *mut AudioStreamPacketDescription,
-        ) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioConverterFillComplexBuffer\0")
-            .expect("AudioConverterFillComplexBuffer not found");
-        f(
+        fw.audio_toolbox.AudioConverterFillComplexBuffer(
             converter,
             in_input_data_proc,
             in_input_data_proc_user_data,
@@ -1346,12 +1405,7 @@ pub unsafe fn audio_format_get_property_info(
     out_property_data_size: *mut u32,
 ) -> OSStatus {
     unsafe {
-        type Fn = unsafe extern "C" fn(u32, u32, *const std::ffi::c_void, *mut u32) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioFormatGetPropertyInfo\0")
-            .expect("AudioFormatGetPropertyInfo not found");
-        f(
+        fw.audio_toolbox.AudioFormatGetPropertyInfo(
             in_property_id,
             in_specifier_size,
             in_specifier,
@@ -1375,18 +1429,7 @@ pub unsafe fn audio_format_get_property(
     out_property_data: *mut std::ffi::c_void,
 ) -> OSStatus {
     unsafe {
-        type Fn = unsafe extern "C" fn(
-            u32,
-            u32,
-            *const std::ffi::c_void,
-            *mut u32,
-            *mut std::ffi::c_void,
-        ) -> OSStatus;
-        let f: libloading::Symbol<Fn> = fw
-            .audio_toolbox
-            .get(b"AudioFormatGetProperty\0")
-            .expect("AudioFormatGetProperty not found");
-        f(
+        fw.audio_toolbox.AudioFormatGetProperty(
             in_property_id,
             in_specifier_size,
             in_specifier,
@@ -1404,17 +1447,24 @@ mod tests {
     /// stable AT entry point resolves.
     #[test]
     fn frameworks_load() {
+        // Building the bindings already resolved every entry point;
+        // re-resolve the two anchor symbols through the owning
+        // libraries to prove the handles are live mappings.
         let fw = framework().expect("framework load");
-        let _: libloading::Symbol<unsafe extern "C" fn()> = unsafe {
+        let sym = unsafe {
             fw.audio_toolbox
-                .get(b"AudioConverterNew\0")
-                .expect("AudioConverterNew symbol")
-        };
-        let _: libloading::Symbol<unsafe extern "C" fn()> = unsafe {
+                .library()
+                .get::<unsafe extern "C" fn()>(c"AudioConverterNew")
+        }
+        .expect("AudioConverterNew symbol");
+        assert!(!sym.as_ptr().is_null());
+        let sym = unsafe {
             fw.core_foundation
-                .get(b"CFRetain\0")
-                .expect("CFRetain symbol")
-        };
+                .library()
+                .get::<unsafe extern "C" fn()>(c"CFRetain")
+        }
+        .expect("CFRetain symbol");
+        assert!(!sym.as_ptr().is_null());
     }
 
     #[test]
@@ -1505,16 +1555,15 @@ mod tests {
         // The global AudioFormat query surface must resolve alongside
         // the converter entry points.
         let fw = framework().expect("framework load");
-        let _: libloading::Symbol<unsafe extern "C" fn()> = unsafe {
-            fw.audio_toolbox
-                .get(b"AudioFormatGetProperty\0")
-                .expect("AudioFormatGetProperty symbol")
-        };
-        let _: libloading::Symbol<unsafe extern "C" fn()> = unsafe {
-            fw.audio_toolbox
-                .get(b"AudioFormatGetPropertyInfo\0")
-                .expect("AudioFormatGetPropertyInfo symbol")
-        };
+        for name in [c"AudioFormatGetProperty", c"AudioFormatGetPropertyInfo"] {
+            let sym = unsafe {
+                fw.audio_toolbox
+                    .library()
+                    .get::<unsafe extern "C" fn()>(name)
+            }
+            .unwrap_or_else(|e| panic!("{name:?}: {e}"));
+            assert!(!sym.as_ptr().is_null());
+        }
     }
 
     #[test]

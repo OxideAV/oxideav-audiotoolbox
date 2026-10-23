@@ -19,7 +19,7 @@
 //!   transport must carry `AudioStreamPacketDescription`s.
 //!
 //! Everything here is feature-independent (errors are
-//! [`AtError`](crate::status::AtError)), so `default-features = false`
+//! [`AtError`]), so `default-features = false`
 //! consumers can probe the OS inventory without pulling
 //! `oxideav-core`.
 

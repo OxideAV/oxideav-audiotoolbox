@@ -3,8 +3,9 @@
 //!
 //! This crate is a **runtime-loaded** bridge to Apple's
 //! [AudioToolbox](https://developer.apple.com/documentation/audiotoolbox)
-//! framework. It uses [`libloading`] to `dlopen` the framework on
-//! first use, so:
+//! framework. It uses [`dlsym`] to `dlopen` the framework on first
+//! use and resolves every entry point up front through
+//! [`dlsym::library!`], so:
 //!
 //! * macOS builds have **no compile-time link dependency** on
 //!   AudioToolbox; if the framework can't be loaded, the registered

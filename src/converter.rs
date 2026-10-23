@@ -11,7 +11,7 @@
 //! * `Drop` disposes the handle, so no code path can leak one;
 //! * the property surface is typed — magic cookies, packet sizes,
 //!   bit rates, prime info, current stream descriptions — with every
-//!   `OSStatus` classified through [`AtStatus`](crate::status::AtStatus);
+//!   `OSStatus` classified through [`AtStatus`];
 //! * [`Converter::raw`] exposes the handle for the
 //!   `FillComplexBuffer` input-callback dance, which stays at the
 //!   `sys` level because its buffer-lifetime contract is inherently

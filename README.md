@@ -8,7 +8,7 @@ macOS AudioToolbox hardware decode/encode bridge for the [oxideav](https://githu
 
 Apple's [AudioToolbox](https://developer.apple.com/documentation/audiotoolbox) exposes the dedicated audio codec engine on Apple Silicon (and equivalent paths on Intel Macs). For AAC encode/decode this is the canonical "hardware AAC" path historically credited with iPhone-quality encodes at very low CPU cost.
 
-This crate is a **thin runtime-loaded bridge** — no compile-time link dependency on AudioToolbox, no Objective-C / Swift. The framework is opened via [`libloading`] on first use.
+This crate is a **thin runtime-loaded bridge** — no compile-time link dependency on AudioToolbox, no Objective-C / Swift. The framework is opened via [`dlsym`](https://crates.io/crates/dlsym) on first use, with every entry point resolved up front through `dlsym::library!`.
 
 ## Fallback behaviour
 
