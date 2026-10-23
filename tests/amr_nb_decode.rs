@@ -33,7 +33,7 @@
 // test target compiles away (matching the standalone CI path).
 #![cfg(all(target_os = "macos", feature = "registry"))]
 
-use oxideav_audiotoolbox::amr::{make_toc, FrameType};
+use oxideav_audiotoolbox::amr::{FrameType, make_toc};
 use oxideav_audiotoolbox::amr_decoder;
 use oxideav_core::{CodecId, CodecParameters, Frame, Packet, TimeBase};
 

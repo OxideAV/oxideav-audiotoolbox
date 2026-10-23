@@ -119,7 +119,7 @@ fn read_wav_s16le(path: &PathBuf) -> Vec<i16> {
     }
     let sample_bytes = &bytes[payload_start..payload_start + payload_len];
     let mut out = Vec::with_capacity(sample_bytes.len() / 2);
-    for chunk in sample_bytes.chunks_exact(2) {
+    for chunk in sample_bytes.as_chunks::<2>().0 {
         out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
     }
     out
@@ -167,14 +167,14 @@ fn mp3_decoder_decodes_staged_fixture() {
                 (af.samples as usize) * 2 * 2,
                 "S16 interleaved stereo: samples × 2 chans × 2 bytes"
             );
-            for chunk in af.data[0].chunks_exact(2) {
+            for chunk in af.data[0].as_chunks::<2>().0 {
                 decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
             }
         }
     }
     dec.flush().expect("flush");
     while let Ok(Frame::Audio(af)) = dec.receive_frame() {
-        for chunk in af.data[0].chunks_exact(2) {
+        for chunk in af.data[0].as_chunks::<2>().0 {
             decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
         }
     }

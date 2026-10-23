@@ -98,7 +98,7 @@ impl AlacAtEncoder {
             other => {
                 return Err(Error::unsupported(format!(
                     "ALAC encoder: only S16 / S32 input supported (got {other:?})"
-                )))
+                )));
             }
         };
 
@@ -361,22 +361,24 @@ unsafe extern "C" fn pcm_input_callback(
     _out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut PcmContext);
-    if ctx.consumed || ctx.len == 0 {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut PcmContext);
+        if ctx.consumed || ctx.len == 0 {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+
+        let n_packets = (ctx.len / ctx.bytes_per_packet).max(1);
+        *io_number_data_packets = n_packets;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = n_packets * ctx.bytes_per_packet;
+        (*io_data).buffers[0].data = ctx.data as *mut u8;
+
+        ctx.consumed = true;
+        0
     }
-
-    let n_packets = (ctx.len / ctx.bytes_per_packet).max(1);
-    *io_number_data_packets = n_packets;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = n_packets * ctx.bytes_per_packet;
-    (*io_data).buffers[0].data = ctx.data as *mut u8;
-
-    ctx.consumed = true;
-    0
 }
 
 /// Factory function registered with the codec registry.

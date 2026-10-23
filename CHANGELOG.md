@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- edition 2024, MSRV 1.95.
 - **Round 401: every `OSStatus` failure site routed through the typed
   taxonomy** (13 codec modules, 38 sites). All
   `Error::other(format!("... failed: OSStatus {status}"))` sites in

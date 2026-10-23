@@ -92,8 +92,10 @@ fn get_global_bytes(property_id: u32, specifier: &[u8]) -> Result<Vec<u8>, AtErr
 /// [`AudioFormatId`].
 fn parse_format_ids(bytes: &[u8]) -> Vec<AudioFormatId> {
     bytes
-        .chunks_exact(4)
-        .map(|c| AudioFormatId::from_u32(u32::from_ne_bytes(c.try_into().unwrap())))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| AudioFormatId::from_u32(u32::from_ne_bytes(*c)))
         .collect()
 }
 
@@ -146,7 +148,9 @@ pub fn available_encode_sample_rates(
 
 fn parse_value_ranges(bytes: &[u8]) -> Vec<AudioValueRange> {
     bytes
-        .chunks_exact(std::mem::size_of::<AudioValueRange>())
+        .as_chunks::<{ std::mem::size_of::<AudioValueRange>() }>()
+        .0
+        .iter()
         .map(|chunk| AudioValueRange {
             minimum: f64::from_ne_bytes(chunk[0..8].try_into().unwrap()),
             maximum: f64::from_ne_bytes(chunk[8..16].try_into().unwrap()),

@@ -35,7 +35,7 @@ use std::ffi::c_void;
 use oxideav_core::Decoder;
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, TimeBase};
 
-use crate::opus::{OpusHead, DEFAULT_FRAMES_PER_PACKET_48K, HEAD_LEN_FAMILY_0};
+use crate::opus::{DEFAULT_FRAMES_PER_PACKET_48K, HEAD_LEN_FAMILY_0, OpusHead};
 use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
@@ -371,11 +371,11 @@ impl Decoder for OpusAtDecoder {
         self.input_queue.clear();
         self.pts = 0;
         self.eof = false;
-        if !self.converter.is_null() {
-            if let Ok(fw) = sys::framework() {
-                unsafe {
-                    sys::audio_converter_reset(fw, self.converter);
-                }
+        if !self.converter.is_null()
+            && let Ok(fw) = sys::framework()
+        {
+            unsafe {
+                sys::audio_converter_reset(fw, self.converter);
             }
         }
         Ok(())
@@ -424,38 +424,40 @@ unsafe extern "C" fn opus_input_callback(
     out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut InputContext);
-    if ctx.queue.is_empty() {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut InputContext);
+        if ctx.queue.is_empty() {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+        let pkt = ctx.queue.remove(0);
+
+        ctx.packet_desc = AudioStreamPacketDescription {
+            start_offset: 0,
+            // AT reads the per-packet frame count from the Opus TOC byte
+            // itself — set this to 0 so the converter consults its own
+            // parse rather than ours.
+            variable_frames_in_packet: 0,
+            data_byte_size: pkt.len() as u32,
+        };
+
+        *io_number_data_packets = 1;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
+        (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
+        (*io_data).buffers[0].number_channels = 0;
+
+        if !out_packet_desc.is_null() {
+            *out_packet_desc = &mut ctx.packet_desc;
+        }
+
+        // Stash the moved packet so its allocation outlives the callback
+        // and AT can still read the bytes after we return.
+        ctx.handed_off.push(pkt);
+        0
     }
-    let pkt = ctx.queue.remove(0);
-
-    ctx.packet_desc = AudioStreamPacketDescription {
-        start_offset: 0,
-        // AT reads the per-packet frame count from the Opus TOC byte
-        // itself — set this to 0 so the converter consults its own
-        // parse rather than ours.
-        variable_frames_in_packet: 0,
-        data_byte_size: pkt.len() as u32,
-    };
-
-    *io_number_data_packets = 1;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
-    (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
-    (*io_data).buffers[0].number_channels = 0;
-
-    if !out_packet_desc.is_null() {
-        *out_packet_desc = &mut ctx.packet_desc;
-    }
-
-    // Stash the moved packet so its allocation outlives the callback
-    // and AT can still read the bytes after we return.
-    ctx.handed_off.push(pkt);
-    0
 }
 
 /// Factory function registered with the codec registry.

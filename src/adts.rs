@@ -58,11 +58,7 @@ pub struct AdtsHeader {
 impl AdtsHeader {
     /// Byte length of just the header portion.
     pub fn header_len(&self) -> usize {
-        if self.protection_absent {
-            7
-        } else {
-            9
-        }
+        if self.protection_absent { 7 } else { 9 }
     }
 }
 

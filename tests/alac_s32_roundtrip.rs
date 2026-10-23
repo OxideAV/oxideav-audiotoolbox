@@ -75,7 +75,9 @@ fn s32_vec_to_bytes(samples: &[i32]) -> Vec<u8> {
 
 fn bytes_to_s32_vec(bytes: &[u8]) -> Vec<i32> {
     bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
 }

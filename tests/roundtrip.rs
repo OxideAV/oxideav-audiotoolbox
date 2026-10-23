@@ -135,8 +135,8 @@ fn aac_roundtrip_snr_ge_25db() {
             match dec.receive_frame() {
                 Ok(Frame::Audio(af)) => {
                     let plane = &af.data[0];
-                    for chunk in plane.chunks_exact(4) {
-                        decoded_samples.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                    for chunk in plane.as_chunks::<4>().0 {
+                        decoded_samples.push(f32::from_le_bytes(*chunk));
                     }
                 }
                 Ok(_) => {}

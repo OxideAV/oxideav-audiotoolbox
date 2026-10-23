@@ -326,7 +326,7 @@ mod tests {
         // Family 1 declared but mapping table truncated.
         let mut bytes = OpusHead::family_0(2, 48_000).to_bytes();
         bytes[18] = 1; // mapping family = 1
-                       // No table bytes appended → parse must fail.
+        // No table bytes appended → parse must fail.
         assert!(OpusHead::from_bytes(&bytes).is_err());
     }
 

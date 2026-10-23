@@ -101,7 +101,7 @@ impl AlacAtDecoder {
                 Some(other) => {
                     return Err(Error::unsupported(format!(
                         "ALAC decoder: unsupported sample_format {other:?}"
-                    )))
+                    )));
                 }
             };
             let cfg = AlacSpecificConfig::new(sr, ch as u8, bit_depth);
@@ -316,11 +316,11 @@ impl Decoder for AlacAtDecoder {
         self.pending = None;
         self.pts = 0;
         self.eof = false;
-        if !self.converter.is_null() {
-            if let Ok(fw) = sys::framework() {
-                unsafe {
-                    sys::audio_converter_reset(fw, self.converter);
-                }
+        if !self.converter.is_null()
+            && let Ok(fw) = sys::framework()
+        {
+            unsafe {
+                sys::audio_converter_reset(fw, self.converter);
             }
         }
         Ok(())
@@ -340,27 +340,29 @@ unsafe extern "C" fn alac_input_callback(
     out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut InputContext);
-    if ctx.consumed || ctx.len == 0 {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut InputContext);
+        if ctx.consumed || ctx.len == 0 {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+
+        *io_number_data_packets = 1;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = ctx.len;
+        (*io_data).buffers[0].data = ctx.data as *mut u8;
+        (*io_data).buffers[0].number_channels = 0; // ignored for compressed input
+
+        if !out_packet_desc.is_null() {
+            ctx.packet_desc.variable_frames_in_packet = ctx.frames_per_packet;
+            *out_packet_desc = &mut ctx.packet_desc;
+        }
+
+        ctx.consumed = true;
+        0
     }
-
-    *io_number_data_packets = 1;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = ctx.len;
-    (*io_data).buffers[0].data = ctx.data as *mut u8;
-    (*io_data).buffers[0].number_channels = 0; // ignored for compressed input
-
-    if !out_packet_desc.is_null() {
-        ctx.packet_desc.variable_frames_in_packet = ctx.frames_per_packet;
-        *out_packet_desc = &mut ctx.packet_desc;
-    }
-
-    ctx.consumed = true;
-    0
 }
 
 /// Factory function registered with the codec registry.

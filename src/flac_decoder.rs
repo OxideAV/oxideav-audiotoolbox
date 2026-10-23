@@ -54,7 +54,7 @@ use oxideav_core::{
 };
 
 use crate::flac::{
-    self, ChannelAssignment, FrameHeader, StreamInfo, MAGIC_COOKIE_MIN_LEN, STREAMINFO_BODY_LEN,
+    self, ChannelAssignment, FrameHeader, MAGIC_COOKIE_MIN_LEN, STREAMINFO_BODY_LEN, StreamInfo,
 };
 use crate::status::status_error;
 use crate::sys::{
@@ -339,11 +339,11 @@ impl Decoder for FlacAtDecoder {
         self.input_queue.clear();
         self.pts = 0;
         self.eof = false;
-        if !self.converter.is_null() {
-            if let Ok(fw) = sys::framework() {
-                unsafe {
-                    sys::audio_converter_reset(fw, self.converter);
-                }
+        if !self.converter.is_null()
+            && let Ok(fw) = sys::framework()
+        {
+            unsafe {
+                sys::audio_converter_reset(fw, self.converter);
             }
         }
         Ok(())
@@ -399,7 +399,7 @@ fn resolve_cookie_and_info(params: &CodecParameters) -> Result<(Vec<u8>, StreamI
         Some(other) => {
             return Err(Error::unsupported(format!(
                 "FLAC decoder: unsupported sample_format {other:?}"
-            )))
+            )));
         }
     };
     if !(1..=8).contains(&ch) {
@@ -457,37 +457,39 @@ unsafe extern "C" fn flac_input_callback(
     out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut InputContext);
-    if ctx.queue.is_empty() {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut InputContext);
+        if ctx.queue.is_empty() {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+        let pkt = ctx.queue.remove(0);
+
+        ctx.packet_desc = AudioStreamPacketDescription {
+            start_offset: 0,
+            // FLAC's per-packet sample count varies (variable-blocksize
+            // streams) but AT doesn't actually consult this field for
+            // FLAC decode — it parses the frame header itself. Set it
+            // to 0 (= "let the converter figure it out").
+            variable_frames_in_packet: 0,
+            data_byte_size: pkt.len() as u32,
+        };
+
+        *io_number_data_packets = 1;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
+        (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
+        (*io_data).buffers[0].number_channels = 0;
+
+        if !out_packet_desc.is_null() {
+            *out_packet_desc = &mut ctx.packet_desc;
+        }
+
+        ctx.handed_off.push(pkt);
+        0
     }
-    let pkt = ctx.queue.remove(0);
-
-    ctx.packet_desc = AudioStreamPacketDescription {
-        start_offset: 0,
-        // FLAC's per-packet sample count varies (variable-blocksize
-        // streams) but AT doesn't actually consult this field for
-        // FLAC decode — it parses the frame header itself. Set it
-        // to 0 (= "let the converter figure it out").
-        variable_frames_in_packet: 0,
-        data_byte_size: pkt.len() as u32,
-    };
-
-    *io_number_data_packets = 1;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
-    (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
-    (*io_data).buffers[0].number_channels = 0;
-
-    if !out_packet_desc.is_null() {
-        *out_packet_desc = &mut ctx.packet_desc;
-    }
-
-    ctx.handed_off.push(pkt);
-    0
 }
 
 /// Factory function registered with the codec registry.

@@ -413,11 +413,11 @@ impl Decoder for Mp3AtDecoder {
         self.input_queue.clear();
         self.pts = 0;
         self.eof = false;
-        if !self.converter.is_null() {
-            if let Ok(fw) = sys::framework() {
-                unsafe {
-                    sys::audio_converter_reset(fw, self.converter);
-                }
+        if !self.converter.is_null()
+            && let Ok(fw) = sys::framework()
+        {
+            unsafe {
+                sys::audio_converter_reset(fw, self.converter);
             }
         }
         Ok(())
@@ -439,42 +439,44 @@ unsafe extern "C" fn mp3_input_callback(
     out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut InputContext);
-    if ctx.queue.is_empty() {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut InputContext);
+        if ctx.queue.is_empty() {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+
+        let pkt = ctx.queue.remove(0);
+        // Re-parse the header to recover samples_per_packet (used by AT to
+        // assign a packet description). Cheap — header is the first 4
+        // bytes and is always valid by the time we get here (decode_packet
+        // already validated it).
+        let header = FrameHeader::parse([pkt[0], pkt[1], pkt[2], pkt[3]]);
+        let samples = header.map(|h| h.samples_per_frame).unwrap_or(1152);
+
+        ctx.packet_desc = AudioStreamPacketDescription {
+            start_offset: 0,
+            variable_frames_in_packet: samples,
+            data_byte_size: pkt.len() as u32,
+        };
+
+        *io_number_data_packets = 1;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
+        (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
+        (*io_data).buffers[0].number_channels = 0;
+
+        if !out_packet_desc.is_null() {
+            *out_packet_desc = &mut ctx.packet_desc;
+        }
+
+        // Move the popped packet to `handed_off` so its bytes survive past
+        // the callback return.
+        ctx.handed_off.push(pkt);
+        0
     }
-
-    let pkt = ctx.queue.remove(0);
-    // Re-parse the header to recover samples_per_packet (used by AT to
-    // assign a packet description). Cheap — header is the first 4
-    // bytes and is always valid by the time we get here (decode_packet
-    // already validated it).
-    let header = FrameHeader::parse([pkt[0], pkt[1], pkt[2], pkt[3]]);
-    let samples = header.map(|h| h.samples_per_frame).unwrap_or(1152);
-
-    ctx.packet_desc = AudioStreamPacketDescription {
-        start_offset: 0,
-        variable_frames_in_packet: samples,
-        data_byte_size: pkt.len() as u32,
-    };
-
-    *io_number_data_packets = 1;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
-    (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
-    (*io_data).buffers[0].number_channels = 0;
-
-    if !out_packet_desc.is_null() {
-        *out_packet_desc = &mut ctx.packet_desc;
-    }
-
-    // Move the popped packet to `handed_off` so its bytes survive past
-    // the callback return.
-    ctx.handed_off.push(pkt);
-    0
 }
 
 /// Factory function registered with the codec registry.

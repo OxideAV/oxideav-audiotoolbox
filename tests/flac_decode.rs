@@ -28,7 +28,7 @@
 use std::path::PathBuf;
 
 use oxideav_audiotoolbox::flac::{
-    self, StreamInfo, FLAC_SIGNATURE, MAGIC_COOKIE_MIN_LEN, STREAMINFO_BODY_LEN,
+    self, FLAC_SIGNATURE, MAGIC_COOKIE_MIN_LEN, STREAMINFO_BODY_LEN, StreamInfo,
 };
 use oxideav_audiotoolbox::flac_decoder;
 use oxideav_core::{CodecId, CodecParameters, Frame, Packet, TimeBase};
@@ -128,7 +128,7 @@ fn read_wav_s16le_mono(path: &PathBuf) -> Vec<i16> {
     }
     let sample_bytes = &bytes[payload_start..payload_start + payload_len];
     let mut out = Vec::with_capacity(sample_bytes.len() / 2);
-    for chunk in sample_bytes.chunks_exact(2) {
+    for chunk in sample_bytes.as_chunks::<2>().0 {
         out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
     }
     out
@@ -186,14 +186,14 @@ fn flac_decoder_decodes_mono_44100_fixture_lossless() {
                 (af.samples as usize) * 2,
                 "S16 mono: samples × 2 bytes per S16 sample"
             );
-            for chunk in af.data[0].chunks_exact(2) {
+            for chunk in af.data[0].as_chunks::<2>().0 {
                 decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
             }
         }
     }
     dec.flush().expect("flush");
     while let Ok(Frame::Audio(af)) = dec.receive_frame() {
-        for chunk in af.data[0].chunks_exact(2) {
+        for chunk in af.data[0].as_chunks::<2>().0 {
             decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
         }
     }

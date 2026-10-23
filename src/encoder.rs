@@ -189,7 +189,7 @@ impl AacAtEncoder {
             _ => {
                 return Err(Error::unsupported(format!(
                     "AacAtEncoder: unsupported channel count {ch}"
-                )))
+                )));
             }
         };
 
@@ -207,7 +207,7 @@ impl AacAtEncoder {
             _ => {
                 return Err(Error::unsupported(
                     "AacAtEncoder: only F32 and S16 input supported",
-                ))
+                ));
             }
         };
 
@@ -265,11 +265,7 @@ impl AacAtEncoder {
             };
             // If the query fails (older macOS, exotic format) fall back
             // to the requested value rather than failing construction.
-            if st == NO_ERR && br != 0 {
-                br
-            } else {
-                bitrate
-            }
+            if st == NO_ERR && br != 0 { br } else { bitrate }
         };
 
         // Query max output packet size.
@@ -695,38 +691,40 @@ unsafe extern "C" fn pcm_input_callback(
     _out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut PcmContext);
-    if ctx.len == 0 {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut PcmContext);
+        if ctx.len == 0 {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+
+        // Cap the number of PCM packets at whatever AT requested (it writes
+        // its want into `*io_number_data_packets` on entry).
+        let requested = *io_number_data_packets;
+        let available = (ctx.len / ctx.bytes_per_packet).max(1);
+        let n_packets = if requested == 0 {
+            available
+        } else {
+            available.min(requested)
+        };
+
+        let bytes = n_packets * ctx.bytes_per_packet;
+        *io_number_data_packets = n_packets;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = bytes;
+        (*io_data).buffers[0].data = ctx.data as *mut u8;
+
+        // Advance the local context so the next callback invocation within
+        // the SAME `FillComplexBuffer` gets the next slice. The outer
+        // `encode_frame_inner` reads `consumed_bytes` after the call to
+        // verify and to advance any persistent cursor.
+        ctx.data = ctx.data.add(bytes as usize);
+        ctx.len -= bytes;
+        ctx.consumed_bytes += bytes;
+        0 // noErr
     }
-
-    // Cap the number of PCM packets at whatever AT requested (it writes
-    // its want into `*io_number_data_packets` on entry).
-    let requested = *io_number_data_packets;
-    let available = (ctx.len / ctx.bytes_per_packet).max(1);
-    let n_packets = if requested == 0 {
-        available
-    } else {
-        available.min(requested)
-    };
-
-    let bytes = n_packets * ctx.bytes_per_packet;
-    *io_number_data_packets = n_packets;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = bytes;
-    (*io_data).buffers[0].data = ctx.data as *mut u8;
-
-    // Advance the local context so the next callback invocation within
-    // the SAME `FillComplexBuffer` gets the next slice. The outer
-    // `encode_frame_inner` reads `consumed_bytes` after the call to
-    // verify and to advance any persistent cursor.
-    ctx.data = ctx.data.add(bytes as usize);
-    ctx.len -= bytes;
-    ctx.consumed_bytes += bytes;
-    0 // noErr
 }
 
 /// Read the encoder-vended magic cookie via the (size-query, value-fetch)

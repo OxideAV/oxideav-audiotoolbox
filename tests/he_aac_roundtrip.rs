@@ -162,8 +162,8 @@ fn drive_he(profile: &str, bitrate: u64) -> (f64, f64) {
         loop {
             match dec.receive_frame() {
                 Ok(Frame::Audio(af)) => {
-                    for chunk in af.data[0].chunks_exact(4) {
-                        decoded.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                    for chunk in af.data[0].as_chunks::<4>().0 {
+                        decoded.push(f32::from_le_bytes(*chunk));
                     }
                 }
                 Ok(_) => {}

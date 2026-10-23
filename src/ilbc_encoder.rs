@@ -234,8 +234,8 @@ impl Encoder for IlbcAtEncoder {
                 if n_samples > 0 && bytes.len() == n_samples * 4 {
                     // F32 → S16
                     let mut s16 = Vec::with_capacity(n_samples * 2);
-                    for chunk in bytes.chunks_exact(4) {
-                        let f = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    for chunk in bytes.as_chunks::<4>().0 {
+                        let f = f32::from_le_bytes(*chunk);
                         let v = (f.clamp(-1.0, 1.0) * 32767.0).round() as i16;
                         s16.extend_from_slice(&v.to_le_bytes());
                     }
@@ -296,32 +296,34 @@ unsafe extern "C" fn pcm_input_callback(
     _out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut PcmContext);
-    if ctx.len == 0 {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut PcmContext);
+        if ctx.len == 0 {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+
+        let requested = *io_number_data_packets;
+        let available = (ctx.len / ctx.bytes_per_packet).max(1);
+        let n_packets = if requested == 0 {
+            available
+        } else {
+            available.min(requested)
+        };
+
+        let bytes = n_packets * ctx.bytes_per_packet;
+        *io_number_data_packets = n_packets;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = bytes;
+        (*io_data).buffers[0].data = ctx.data as *mut u8;
+
+        ctx.data = ctx.data.add(bytes as usize);
+        ctx.len -= bytes;
+        ctx.consumed_bytes += bytes;
+        0
     }
-
-    let requested = *io_number_data_packets;
-    let available = (ctx.len / ctx.bytes_per_packet).max(1);
-    let n_packets = if requested == 0 {
-        available
-    } else {
-        available.min(requested)
-    };
-
-    let bytes = n_packets * ctx.bytes_per_packet;
-    *io_number_data_packets = n_packets;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = bytes;
-    (*io_data).buffers[0].data = ctx.data as *mut u8;
-
-    ctx.data = ctx.data.add(bytes as usize);
-    ctx.len -= bytes;
-    ctx.consumed_bytes += bytes;
-    0
 }
 
 /// Factory function registered with the codec registry.

@@ -57,7 +57,9 @@ fn gen_sine_s16(n_frames: usize) -> Vec<u8> {
 
 fn bytes_to_s16_vec(bytes: &[u8]) -> Vec<i16> {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect()
 }
@@ -261,7 +263,9 @@ fn opus_roundtrip_48k_mono_default_settings() {
     let ref_bytes_stereo = gen_sine_s16(N_FRAMES);
     // Reduce to mono by dropping the right channel.
     let ref_bytes: Vec<u8> = ref_bytes_stereo
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|c| [c[0], c[1]])
         .collect();
     let ref_samples = bytes_to_s16_vec(&ref_bytes);

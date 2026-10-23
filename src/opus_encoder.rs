@@ -41,7 +41,7 @@ use oxideav_core::{
     CodecId, CodecParameters, Error, Frame, Packet, Result, SampleFormat, TimeBase,
 };
 
-use crate::opus::{self, OpusHead, DEFAULT_FRAME_DURATION_MS};
+use crate::opus::{self, DEFAULT_FRAME_DURATION_MS, OpusHead};
 use crate::status::status_error;
 use crate::sys::{
     self, AudioBuffer, AudioBufferList1, AudioConverterRef, AudioStreamBasicDescription,
@@ -128,7 +128,7 @@ impl OpusAtEncoder {
             other => {
                 return Err(Error::unsupported(format!(
                     "Opus encoder: only S16 / F32 input supported (got {other:?})"
-                )))
+                )));
             }
         };
 
@@ -519,28 +519,30 @@ unsafe extern "C" fn pcm_input_callback(
     _out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut PcmContext);
-    let remaining = ctx.remaining();
-    if remaining == 0 {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut PcmContext);
+        let remaining = ctx.remaining();
+        if remaining == 0 {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+
+        let requested = (*io_number_data_packets).max(1) as usize;
+        let avail_frames = remaining / ctx.bytes_per_frame as usize;
+        let give = avail_frames.min(requested);
+        let give_bytes = give * ctx.bytes_per_frame as usize;
+
+        *io_number_data_packets = give as u32;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = give_bytes as u32;
+        let ptr = ctx.queue.as_ptr().add(ctx.read_pos) as *mut u8;
+        (*io_data).buffers[0].data = ptr;
+
+        ctx.read_pos += give_bytes;
+        0
     }
-
-    let requested = (*io_number_data_packets).max(1) as usize;
-    let avail_frames = remaining / ctx.bytes_per_frame as usize;
-    let give = avail_frames.min(requested);
-    let give_bytes = give * ctx.bytes_per_frame as usize;
-
-    *io_number_data_packets = give as u32;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = give_bytes as u32;
-    let ptr = ctx.queue.as_ptr().add(ctx.read_pos) as *mut u8;
-    (*io_data).buffers[0].data = ptr;
-
-    ctx.read_pos += give_bytes;
-    0
 }
 
 /// Factory function registered with the codec registry.

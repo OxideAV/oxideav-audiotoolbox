@@ -78,19 +78,19 @@ impl IlbcAtDecoder {
         // caller are accepted for documentation but ignored for the
         // ASBD build — feeding AT anything other than (8000, 1) yields
         // `kAudioConverterErr_FormatNotSupported`.
-        if let Some(sr) = params.sample_rate {
-            if sr != 8_000 {
-                return Err(Error::unsupported(format!(
-                    "iLBC decoder: sample_rate must be 8000 (got {sr})"
-                )));
-            }
+        if let Some(sr) = params.sample_rate
+            && sr != 8_000
+        {
+            return Err(Error::unsupported(format!(
+                "iLBC decoder: sample_rate must be 8000 (got {sr})"
+            )));
         }
-        if let Some(ch) = params.channels {
-            if ch != 1 {
-                return Err(Error::unsupported(format!(
-                    "iLBC decoder: channels must be 1 (got {ch})"
-                )));
-            }
+        if let Some(ch) = params.channels
+            && ch != 1
+        {
+            return Err(Error::unsupported(format!(
+                "iLBC decoder: channels must be 1 (got {ch})"
+            )));
         }
 
         let mode = IlbcMode::parse(params.options.get("mode"));
@@ -286,11 +286,11 @@ impl Decoder for IlbcAtDecoder {
         self.input_queue.clear();
         self.pts = 0;
         self.eof = false;
-        if !self.converter.is_null() {
-            if let Ok(fw) = sys::framework() {
-                unsafe {
-                    sys::audio_converter_reset(fw, self.converter);
-                }
+        if !self.converter.is_null()
+            && let Ok(fw) = sys::framework()
+        {
+            unsafe {
+                sys::audio_converter_reset(fw, self.converter);
             }
         }
         Ok(())
@@ -310,35 +310,37 @@ unsafe extern "C" fn ilbc_input_callback(
     out_packet_desc: *mut *mut AudioStreamPacketDescription,
     in_user_data: *mut c_void,
 ) -> sys::OSStatus {
-    let ctx = &mut *(in_user_data as *mut InputContext);
-    if ctx.queue.is_empty() {
-        *io_number_data_packets = 0;
-        (*io_data).buffers[0].data_byte_size = 0;
-        (*io_data).buffers[0].data = std::ptr::null_mut();
-        return 0;
+    unsafe {
+        let ctx = &mut *(in_user_data as *mut InputContext);
+        if ctx.queue.is_empty() {
+            *io_number_data_packets = 0;
+            (*io_data).buffers[0].data_byte_size = 0;
+            (*io_data).buffers[0].data = std::ptr::null_mut();
+            return 0;
+        }
+
+        let pkt = ctx.queue.remove(0);
+        ctx.packet_desc = AudioStreamPacketDescription {
+            start_offset: 0,
+            variable_frames_in_packet: ctx.frames_per_packet,
+            data_byte_size: pkt.len() as u32,
+        };
+
+        *io_number_data_packets = 1;
+        (*io_data).number_buffers = 1;
+        (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
+        (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
+        (*io_data).buffers[0].number_channels = 0;
+
+        if !out_packet_desc.is_null() {
+            *out_packet_desc = &mut ctx.packet_desc;
+        }
+
+        // Move the popped packet to `handed_off` so its bytes survive past
+        // the callback return.
+        ctx.handed_off.push(pkt);
+        0
     }
-
-    let pkt = ctx.queue.remove(0);
-    ctx.packet_desc = AudioStreamPacketDescription {
-        start_offset: 0,
-        variable_frames_in_packet: ctx.frames_per_packet,
-        data_byte_size: pkt.len() as u32,
-    };
-
-    *io_number_data_packets = 1;
-    (*io_data).number_buffers = 1;
-    (*io_data).buffers[0].data_byte_size = pkt.len() as u32;
-    (*io_data).buffers[0].data = pkt.as_ptr() as *mut u8;
-    (*io_data).buffers[0].number_channels = 0;
-
-    if !out_packet_desc.is_null() {
-        *out_packet_desc = &mut ctx.packet_desc;
-    }
-
-    // Move the popped packet to `handed_off` so its bytes survive past
-    // the callback return.
-    ctx.handed_off.push(pkt);
-    0
 }
 
 /// Factory function registered with the codec registry.

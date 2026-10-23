@@ -192,7 +192,9 @@ impl Converter {
     fn get_value_ranges(&self, property_id: u32) -> Result<Vec<AudioValueRange>, AtError> {
         let bytes = self.get_property_bytes(property_id)?;
         Ok(bytes
-            .chunks_exact(std::mem::size_of::<AudioValueRange>())
+            .as_chunks::<{ std::mem::size_of::<AudioValueRange>() }>()
+            .0
+            .iter()
             .map(|chunk| AudioValueRange {
                 minimum: f64::from_ne_bytes(chunk[0..8].try_into().unwrap()),
                 maximum: f64::from_ne_bytes(chunk[8..16].try_into().unwrap()),
