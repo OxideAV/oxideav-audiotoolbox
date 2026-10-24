@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Encoders declare their accepted input sample rates and formats.**
+  Every registered encoder (AAC, ALAC, iLBC, FLAC, Opus) now fills
+  `CodecCapabilities::accepted_sample_formats` (AAC `F32, S16`; Opus
+  `S16, F32`; ALAC / FLAC `S16, S32`; iLBC `S16`) and, where the codec
+  has a rate grid, `accepted_sample_rates` read at registration from
+  the OS's own `kAudioFormatProperty_AvailableEncodeSampleRates`
+  (fallbacks: Opus 8/12/16/24/48 kHz per RFC 6716, AAC 8–48 kHz nine
+  rates, iLBC 8 kHz; ALAC / FLAC report AudioToolbox's `0..0` "any
+  rate" wildcard and stay unconstrained). A pipeline can now plan a
+  resample / format conversion ahead of a hardware encoder —
+  `oxideav convert --hwaccel tone44100.wav x.opus` used to fail at
+  encoder construction on the 44.1 kHz input. The AAC encoder's
+  `max_sample_rate` drops from 96 kHz to 48 kHz to match what the OS
+  encoder actually accepts (`afconvert -d aac@96000` is refused with
+  `'fmt?'`).
+
 ### Changed
 
 - edition 2024, MSRV 1.95.

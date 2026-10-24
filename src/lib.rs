@@ -83,7 +83,62 @@ pub mod opus_decoder;
 pub mod opus_encoder;
 
 #[cfg(feature = "registry")]
-use oxideav_core::{CodecCapabilities, CodecId, CodecInfo, CodecTag};
+use oxideav_core::{CodecCapabilities, CodecId, CodecInfo, CodecTag, SampleFormat};
+
+/// AAC encoder sample-rate fallback: the grid this host's
+/// `kAudioFormatProperty_AvailableEncodeSampleRates` answers for
+/// `kAudioFormatMPEG4AAC` (black-box probed; `afconvert -d aac@R`
+/// refuses 7 350 / 64 000 / 88 200 / 96 000 Hz with `'fmt?'`).
+#[cfg(feature = "registry")]
+const AAC_ENCODE_RATES: &[u32] = &[
+    8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000,
+];
+
+/// Opus encoder sample-rate fallback: RFC 6716 §2.1.1's five rates
+/// (also exactly what the OS grid answers).
+#[cfg(feature = "registry")]
+const OPUS_ENCODE_RATES: &[u32] = &[8_000, 12_000, 16_000, 24_000, 48_000];
+
+/// iLBC is fixed at 8 kHz.
+#[cfg(feature = "registry")]
+const ILBC_ENCODE_RATES: &[u32] = &[8_000];
+
+/// Reduce an encoder sample-rate grid to an accepted-rate list.
+///
+/// Returns `Some(rates)` (ascending, deduplicated) when every entry is
+/// a discrete positive rate (`minimum == maximum > 0`). Returns `None`
+/// when the grid is empty, carries a continuous range, or carries the
+/// `0..0` "any rate" wildcard AudioToolbox reports for the lossless
+/// encoders — the caller then falls back to its static list (an empty
+/// list meaning "any rate").
+#[doc(hidden)]
+#[cfg(feature = "registry")]
+pub fn discrete_encode_rates(grid: &[sys::AudioValueRange]) -> Option<Vec<u32>> {
+    if grid.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(grid.len());
+    for r in grid {
+        if r.minimum != r.maximum || r.minimum <= 0.0 || r.minimum.fract() != 0.0 {
+            return None;
+        }
+        out.push(r.minimum as u32);
+    }
+    out.sort_unstable();
+    out.dedup();
+    Some(out)
+}
+
+/// The accepted encoder-input sample rates for `fmt`: the OS's own
+/// `kAudioFormatProperty_AvailableEncodeSampleRates` grid when it
+/// answers with discrete rates, else `fallback`.
+#[cfg(feature = "registry")]
+fn encode_rates(fmt: sys::AudioFormatId, fallback: &[u32]) -> Vec<u32> {
+    inventory::available_encode_sample_rates(fmt)
+        .ok()
+        .and_then(|g| discrete_encode_rates(&g))
+        .unwrap_or_else(|| fallback.to_vec())
+}
 
 /// Register AAC LC decoder + encoder factories into the supplied
 /// [`RuntimeContext`](oxideav_core::RuntimeContext).
@@ -144,7 +199,12 @@ pub fn register(ctx: &mut oxideav_core::RuntimeContext) {
         .with_hardware(true)
         .with_priority(10)
         .with_max_channels(8)
-        .with_max_sample_rate(96_000);
+        .with_max_sample_rate(48_000)
+        .with_sample_rates(encode_rates(
+            sys::AudioFormatId::Mpeg4AacLc,
+            AAC_ENCODE_RATES,
+        ))
+        .with_sample_formats(vec![SampleFormat::F32, SampleFormat::S16]);
 
     if inv.encodes(sys::AudioFormatId::Mpeg4AacLc) {
         ctx.codecs.register(
@@ -201,7 +261,9 @@ fn register_alac(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInve
         .with_hardware(true)
         .with_priority(10)
         .with_max_channels(8)
-        .with_max_sample_rate(384_000);
+        .with_max_sample_rate(384_000)
+        .with_sample_rates(encode_rates(sys::AudioFormatId::AppleLossless, &[]))
+        .with_sample_formats(vec![SampleFormat::S16, SampleFormat::S32]);
 
     if inv.encodes(sys::AudioFormatId::AppleLossless) {
         ctx.codecs.register(
@@ -248,7 +310,9 @@ fn register_ilbc(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInve
         .with_hardware(true)
         .with_priority(10)
         .with_max_channels(1)
-        .with_max_sample_rate(8_000);
+        .with_max_sample_rate(8_000)
+        .with_sample_rates(encode_rates(sys::AudioFormatId::Ilbc, ILBC_ENCODE_RATES))
+        .with_sample_formats(vec![SampleFormat::S16]);
 
     if inv.encodes(sys::AudioFormatId::Ilbc) {
         ctx.codecs.register(
@@ -507,7 +571,9 @@ fn register_flac(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInve
         .with_hardware(true)
         .with_priority(10)
         .with_max_channels(8)
-        .with_max_sample_rate(192_000);
+        .with_max_sample_rate(192_000)
+        .with_sample_rates(encode_rates(sys::AudioFormatId::Flac, &[]))
+        .with_sample_formats(vec![SampleFormat::S16, SampleFormat::S32]);
 
     if inv.encodes(sys::AudioFormatId::Flac) {
         ctx.codecs.register(
@@ -564,7 +630,9 @@ fn register_opus(ctx: &mut oxideav_core::RuntimeContext, inv: &inventory::OsInve
         .with_hardware(true)
         .with_priority(10)
         .with_max_channels(2)
-        .with_max_sample_rate(48_000);
+        .with_max_sample_rate(48_000)
+        .with_sample_rates(encode_rates(sys::AudioFormatId::Opus, OPUS_ENCODE_RATES))
+        .with_sample_formats(vec![SampleFormat::S16, SampleFormat::F32]);
 
     if inv.encodes(sys::AudioFormatId::Opus) {
         ctx.codecs.register(
@@ -766,5 +834,108 @@ mod register_tests {
             ctx.codecs.has_encoder(&id),
             "Opus encoder not registered after register()"
         );
+    }
+
+    fn encoder_caps(ctx: &RuntimeContext, cid: &str) -> Option<CodecCapabilities> {
+        ctx.codecs
+            .implementations(&CodecId::new(cid))
+            .iter()
+            .find(|i| i.make_encoder.is_some())
+            .map(|i| i.caps.clone())
+    }
+
+    #[test]
+    fn every_encoder_declares_its_input_sample_formats() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        for cid in ["aac", "alac", "ilbc", "flac", "opus"] {
+            if let Some(caps) = encoder_caps(&ctx, cid) {
+                assert!(
+                    !caps.accepted_sample_formats.is_empty(),
+                    "{cid}: encoder must declare accepted sample formats"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn opus_encoder_declares_the_rfc_6716_rates() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        let Some(caps) = encoder_caps(&ctx, "opus") else {
+            return; // OS without an Opus encoder slot.
+        };
+        assert_eq!(
+            caps.accepted_sample_rates,
+            vec![8_000, 12_000, 16_000, 24_000, 48_000]
+        );
+        assert_eq!(
+            caps.accepted_sample_formats,
+            vec![SampleFormat::S16, SampleFormat::F32]
+        );
+    }
+
+    #[test]
+    fn aac_and_ilbc_encoders_declare_their_rate_grids() {
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        if let Some(caps) = encoder_caps(&ctx, "aac") {
+            assert!(caps.accepted_sample_rates.contains(&44_100));
+            assert!(caps.accepted_sample_rates.contains(&48_000));
+            assert!(!caps.accepted_sample_rates.contains(&96_000));
+            assert_eq!(caps.accepted_sample_formats[0], SampleFormat::F32);
+        }
+        if let Some(caps) = encoder_caps(&ctx, "ilbc") {
+            assert_eq!(caps.accepted_sample_rates, vec![8_000]);
+        }
+        // Lossless encoders take any rate: the OS grid is the `0..0`
+        // wildcard, so the list stays empty ("any rate").
+        for cid in ["alac", "flac"] {
+            if let Some(caps) = encoder_caps(&ctx, cid) {
+                assert!(caps.accepted_sample_rates.is_empty(), "{cid}");
+            }
+        }
+    }
+
+    /// Every (rate, format) pair an encoder declares must actually
+    /// build — the declaration is a promise the pipeline plans on.
+    #[test]
+    fn every_declared_rate_and_format_builds_an_encoder() {
+        use oxideav_core::CodecParameters;
+        let mut ctx = RuntimeContext::new();
+        register(&mut ctx);
+        for (cid, ch) in [("aac", 2u16), ("ilbc", 1), ("opus", 2)] {
+            let Some(caps) = encoder_caps(&ctx, cid) else {
+                continue;
+            };
+            for &sr in &caps.accepted_sample_rates {
+                for &fmt in &caps.accepted_sample_formats {
+                    let mut p = CodecParameters::audio(CodecId::new(cid));
+                    p.sample_rate = Some(sr);
+                    p.channels = Some(ch);
+                    p.sample_format = Some(fmt);
+                    assert!(
+                        ctx.codecs.first_encoder(&p).is_ok(),
+                        "{cid}: declared {sr} Hz / {fmt:?} must build"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn discrete_grid_reduction() {
+        use crate::sys::AudioValueRange as R;
+        let r = |a: f64, b: f64| R {
+            minimum: a,
+            maximum: b,
+        };
+        assert_eq!(
+            discrete_encode_rates(&[r(48_000.0, 48_000.0), r(8_000.0, 8_000.0)]),
+            Some(vec![8_000, 48_000])
+        );
+        assert_eq!(discrete_encode_rates(&[r(0.0, 0.0)]), None);
+        assert_eq!(discrete_encode_rates(&[r(8_000.0, 96_000.0)]), None);
+        assert_eq!(discrete_encode_rates(&[]), None);
     }
 }
