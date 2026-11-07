@@ -67,6 +67,7 @@ pub const HEAD_LEN_FAMILY_0: usize = 19;
 
 /// Parsed OpusHead structure (RFC 7845 §5.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OpusHead {
     /// Version. MUST be 1 (RFC 7845 §5.1 bullet 2); upper nibble
     /// reserved for backwards-compatible extensions.
@@ -93,6 +94,57 @@ pub struct OpusHead {
     /// Verbatim — `stream_count`, `coupled_count`, then `channels` map
     /// bytes per RFC 7845 §5.1.1.
     pub mapping_table: Vec<u8>,
+}
+
+impl OpusHead {
+    /// Set [`OpusHead::version`].
+    #[must_use]
+    pub fn with_version(mut self, v: u8) -> Self {
+        self.version = v;
+        self
+    }
+
+    /// Set [`OpusHead::channels`].
+    #[must_use]
+    pub fn with_channels(mut self, v: u8) -> Self {
+        self.channels = v;
+        self
+    }
+
+    /// Set [`OpusHead::pre_skip`].
+    #[must_use]
+    pub fn with_pre_skip(mut self, v: u16) -> Self {
+        self.pre_skip = v;
+        self
+    }
+
+    /// Set [`OpusHead::input_sample_rate`].
+    #[must_use]
+    pub fn with_input_sample_rate(mut self, v: u32) -> Self {
+        self.input_sample_rate = v;
+        self
+    }
+
+    /// Set [`OpusHead::output_gain`].
+    #[must_use]
+    pub fn with_output_gain(mut self, v: i16) -> Self {
+        self.output_gain = v;
+        self
+    }
+
+    /// Set [`OpusHead::mapping_family`].
+    #[must_use]
+    pub fn with_mapping_family(mut self, v: u8) -> Self {
+        self.mapping_family = v;
+        self
+    }
+
+    /// Set [`OpusHead::mapping_table`].
+    #[must_use]
+    pub fn with_mapping_table(mut self, v: Vec<u8>) -> Self {
+        self.mapping_table = v;
+        self
+    }
 }
 
 /// Default pre-skip recommended by RFC 7845 §4.2 (80 ms at 48 kHz =

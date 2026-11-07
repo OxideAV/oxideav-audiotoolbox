@@ -293,6 +293,7 @@ pub const K_AUDIO_FORMAT_PROPERTY_FORMAT_IS_EXTERNALLY_FRAMED: u32 = 0x66657866;
 /// a four-line change: a `K_AUDIO_FORMAT_*` const, an enum variant,
 /// and the two map arms in `from_u32` / `as_u32`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AudioFormatId {
     /// `kAudioFormatLinearPCM` — uncompressed interleaved PCM. The only
     /// non-compressed variant; every other arm describes a compressed

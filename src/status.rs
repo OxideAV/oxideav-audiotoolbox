@@ -117,6 +117,7 @@ pub const K_AUDIO_MEM_FULL: OSStatus = -108;
 /// Coarse semantic bucket for an [`AtStatus`] — the axis a bridge
 /// caller actually branches on when deciding how to surface a failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StatusKind {
     /// The call succeeded.
     Ok,
@@ -149,6 +150,7 @@ pub enum StatusKind {
 /// anything else is carried verbatim in [`AtStatus::Unknown`] so
 /// `from_raw(s).as_raw() == s` for all inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AtStatus {
     /// `noErr` (0).
     Ok,
@@ -415,6 +417,7 @@ impl std::fmt::Display for AtStatus {
 /// `From`, following the same [`StatusKind`] mapping as
 /// [`status_error`].
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AtError {
     /// The AudioToolbox framework could not be dlopen-ed (older
     /// macOS, sandbox without the framework, non-mac host). Carries

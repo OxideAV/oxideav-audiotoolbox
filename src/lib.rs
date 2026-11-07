@@ -42,14 +42,21 @@
 //! `libc::malloc` — it's the platform, not a copied algorithm. The
 //! workspace's clean-room rule does not apply.
 
+#[doc(hidden)]
 pub mod adts;
+#[doc(hidden)]
 pub mod alac;
+#[doc(hidden)]
 pub mod amr;
+#[doc(hidden)]
 pub mod amr_wb;
 pub mod converter;
+#[doc(hidden)]
 pub mod flac;
+#[doc(hidden)]
 pub mod ilbc;
 pub mod inventory;
+#[doc(hidden)]
 pub mod mp3;
 pub mod opus;
 pub mod status;

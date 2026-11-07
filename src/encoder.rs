@@ -36,6 +36,7 @@ use crate::sys::{
 /// they are emitted as raw AAC bytes with the AOT carried in the magic
 /// cookie — the same out-of-band path HE uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AacProfile {
     Lc,
     He,

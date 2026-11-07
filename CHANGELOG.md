@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `OpusHead::new(..)` (all fields) plus `with_*` setters for every field.
+
+### Changed
+
+- API hygiene: `#[non_exhaustive]` on enums `StatusKind`, `AtStatus`,
+  `AtError`, `sys::AudioFormatId`, `encoder::AacProfile` and on the
+  `opus::OpusHead` record (build it with `OpusHead::family_0` /
+  `OpusHead::new` + `with_*`). The bitstream-helper modules `adts`,
+  `alac`, `amr`, `amr_wb`, `flac`, `ilbc` and `mp3` (magic-cookie /
+  header plumbing the bridge uses internally) are now `#[doc(hidden)]`.
+  The `repr(C)` FFI records in `sys` stay exhaustive (OS ABI layout).
+
 ## [0.0.4](https://github.com/OxideAV/oxideav-audiotoolbox/compare/v0.0.3...v0.0.4) - 2026-10-24
 
 ### Fixed
